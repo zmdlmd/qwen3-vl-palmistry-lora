@@ -1,6 +1,7 @@
 import os
 import torch
-from peft import LoraConfig, PeftModel
+from peft import LoraConfig, PeftConfig, PeftModel, get_peft_model
+from peft.utils.save_and_load import load_peft_weights, set_peft_model_state_dict
 import ast
 import pathlib
 from transformers import (
@@ -50,7 +51,11 @@ def find_target_linear_names(model, num_lora_modules=-1, lora_namespan_exclude=[
 
 def set_requires_grad(parameters, requires_grad):
     for p in parameters:
-        p.requires_grad = requires_grad
+        if not requires_grad:
+            p.requires_grad = False
+            continue
+        if p.is_floating_point() or torch.is_complex(p):
+            p.requires_grad = True
 
 def configure_vision_tower(model, training_args, compute_dtype, device):
     vision_tower = model.visual
@@ -78,12 +83,45 @@ def unfreeze_topk_layers(model, k_llm: int = 0, k_vis: int = 0):
     if k_llm and hasattr(model, "language_model") and hasattr(model.language_model, "layers"):
         for layer in model.language_model.layers[-k_llm:]:
             for p in layer.parameters():
-                p.requires_grad = True
+                if p.is_floating_point() or torch.is_complex(p):
+                    p.requires_grad = True
 
     if k_vis and hasattr(model, "visual") and hasattr(model.visual, "blocks"):
         for blk in model.visual.blocks[-k_vis:]:
             for p in blk.parameters():
-                p.requires_grad = True
+                if p.is_floating_point() or torch.is_complex(p):
+                    p.requires_grad = True
+
+
+def load_trainable_lora_adapter(model, training_args):
+    if training_args.bits not in [4, 8]:
+        return PeftModel.from_pretrained(
+            model,
+            training_args.lora_weight_path,
+            is_trainable=True,
+        )
+
+    rank0_print("Loading quantized LoRA adapter with filtered base-layer weights.")
+    peft_config = PeftConfig.from_pretrained(training_args.lora_weight_path)
+    peft_config.inference_mode = False
+    model = get_peft_model(model, peft_config)
+
+    adapter_weights = load_peft_weights(training_args.lora_weight_path, device="cpu")
+    adapter_weights = {
+        key: value for key, value in adapter_weights.items() if ".base_layer.weight" not in key
+    }
+    set_peft_model_state_dict(
+        model,
+        adapter_weights,
+        adapter_name="default",
+        ignore_mismatched_sizes=True,
+    )
+
+    if hasattr(model.base_model, "_cast_adapter_dtype"):
+        model.base_model._cast_adapter_dtype(adapter_name="default", autocast_adapter_dtype=True)
+
+    model.train()
+    return model
 
 
 
@@ -197,16 +235,14 @@ def train():
         model.config.dtype = (torch.float32 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32))
         from peft import prepare_model_for_kbit_training
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=training_args.gradient_checkpointing, gradient_checkpointing_kwargs=training_args.gradient_checkpointing_kwargs)
+        if hasattr(model, "visual"):
+            model.visual.to(torch.float32)
 
     peft_config = None
 
     if training_args.lora_enable and training_args.lora_weight_path:
         rank0_print(f"Loading trainable LoRA weights from {training_args.lora_weight_path}")
-        model = PeftModel.from_pretrained(
-            model,
-            training_args.lora_weight_path,
-            is_trainable=True,
-        )
+        model = load_trainable_lora_adapter(model, training_args)
     elif training_args.lora_enable:
         lora_namespan_exclude = training_args.lora_namespan_exclude
         peft_config = LoraConfig(
@@ -229,9 +265,11 @@ def train():
         from peft.tuners.lora import LoraLayer
         for name, module in model.named_modules():
             if isinstance(module, LoraLayer):
-                if training_args.bf16:
+                if training_args.bf16 and 'visual' not in name:
                     module = module.to(torch.bfloat16)
-            if 'norm' in name:
+                elif 'visual' in name:
+                    module = module.to(torch.float32)
+            if 'norm' in name and 'visual' not in name:
                 module = module.to(torch.float32)
             
             if 'lm_head' in name or 'embed_token' in name:
