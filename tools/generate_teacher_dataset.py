@@ -14,7 +14,11 @@ def parse_args() -> argparse.Namespace:
         description="Generate palmistry SFT data by calling an OpenAI-compatible teacher model API.",
     )
     parser.add_argument("--api-base", default="https://api.openai.com/v1", help="OpenAI-compatible API base URL")
-    parser.add_argument("--api-key", default=None, help="API key. If omitted, OPENAI_API_KEY will be used.")
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="OpenAI-compatible API key. If omitted, OPENAI_API_KEY or DASHSCOPE_API_KEY will be used.",
+    )
     parser.add_argument("--model", required=True, help="Teacher model name")
     parser.add_argument("--manifest", default=None, help="Manifest path in .json or .jsonl format")
     parser.add_argument("--image-dir", default=None, help="Image directory used to resolve relative image paths")
@@ -35,9 +39,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+    api_key = args.api_key or os.getenv("OPENAI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
     if not api_key:
-        raise SystemExit("API key is required. Pass --api-key or set OPENAI_API_KEY.")
+        raise SystemExit("API key is required. Pass --api-key or set OPENAI_API_KEY / DASHSCOPE_API_KEY.")
 
     if not args.manifest and not args.image_dir:
         raise SystemExit("Either --manifest or --image-dir must be provided.")

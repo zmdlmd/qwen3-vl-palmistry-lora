@@ -179,6 +179,8 @@ cp configs/palmistry/teacher_generation.env.example configs/palmistry/teacher_ge
 bash scripts/palmistry/generate_teacher_data.sh configs/palmistry/teacher_generation.env
 ```
 
+The teacher API is OpenAI-compatible. For DashScope, Qwen3.5 multimodal models fit this workflow, while the actual API `model` value can be `qwen-plus` or `qwen-vl-plus`.
+
 Main entrypoints:
 
 - [tools/generate_teacher_dataset.py](tools/generate_teacher_dataset.py)

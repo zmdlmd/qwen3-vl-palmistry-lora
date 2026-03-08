@@ -14,7 +14,7 @@ if [[ $# -eq 1 ]]; then
   source "$1"
 fi
 
-OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+OPENAI_API_KEY="${OPENAI_API_KEY:-${DASHSCOPE_API_KEY:-}}"
 TEACHER_API_BASE="${TEACHER_API_BASE:-https://api.openai.com/v1}"
 TEACHER_MODEL="${TEACHER_MODEL:-}"
 TEACHER_MANIFEST="${TEACHER_MANIFEST:-}"
@@ -29,7 +29,7 @@ TEACHER_SLEEP_SECONDS="${TEACHER_SLEEP_SECONDS:-0.0}"
 TEACHER_JSON_MODE="${TEACHER_JSON_MODE:-false}"
 
 if [[ -z "${OPENAI_API_KEY}" ]]; then
-  echo "OPENAI_API_KEY is required." >&2
+  echo "An OpenAI-compatible API key is required. Set OPENAI_API_KEY or DASHSCOPE_API_KEY." >&2
   exit 1
 fi
 
