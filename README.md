@@ -190,6 +190,7 @@ bash scripts/palmistry/generate_teacher_data.sh configs/palmistry/teacher_genera
 By default, the teacher pipeline reads from `/root/autodl-tmp/data/Palmistry.v2i.coco/manifests/teacher_all.jsonl` and resolves images under `/root/autodl-tmp/data/Palmistry.v2i.coco`.
 
 The teacher API is OpenAI-compatible. For DashScope, Qwen3.5 multimodal models fit this workflow, while the actual API `model` value can be `qwen-plus` or `qwen-vl-plus`.
+Set `TEACHER_NUM_WORKERS` in the env file to enable concurrent API requests when the provider quota allows it.
 
 Main entrypoints:
 

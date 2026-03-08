@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from src.palmistry.prompts import DEFAULT_STUDENT_STRUCTURED_PROMPT, build_teacher_structured_prompt
-from src.palmistry.teacher import TeacherGenerationConfig, generate_sft_dataset
+from src.palmistry.teacher import TeacherGenerationConfig, default_num_workers, generate_sft_dataset
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--request-timeout", type=int, default=180)
     parser.add_argument("--sleep-seconds", type=float, default=0.0)
+    parser.add_argument("--num-workers", type=int, default=default_num_workers(), help="Number of concurrent teacher API requests")
     parser.add_argument("--json-mode", action="store_true", help="Enable response_format=json_object if the provider supports it")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--no-resume", action="store_true", help="Do not reuse successful generations found in output-jsonl")
@@ -68,6 +69,7 @@ def main() -> None:
         max_retries=args.max_retries,
         request_timeout=args.request_timeout,
         sleep_seconds=args.sleep_seconds,
+        num_workers=args.num_workers,
         json_mode=args.json_mode,
         limit=args.limit,
         resume=not args.no_resume,

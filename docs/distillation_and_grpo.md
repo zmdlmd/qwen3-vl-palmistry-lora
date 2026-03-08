@@ -27,6 +27,7 @@ bash scripts/palmistry/generate_teacher_data.sh configs/palmistry/teacher_genera
 On AutoDL, the default teacher manifest is `/root/autodl-tmp/data/Palmistry.v2i.coco/manifests/teacher_all.jsonl`, and images are resolved from `/root/autodl-tmp/data/Palmistry.v2i.coco`.
 
 The teacher endpoint only needs to be OpenAI-compatible. For DashScope, the teacher can be a Qwen3.5 multimodal model, while the API `model` value can be `qwen-plus` or `qwen-vl-plus`.
+Use `TEACHER_NUM_WORKERS` or `--num-workers` to increase throughput with concurrent API requests.
 
 Output artifacts:
 

@@ -3,10 +3,13 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import os
 import re
+import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -65,10 +68,16 @@ REPORT_UNCERTAINTY_PATTERNS = (
     re.compile(r"不可辨识"),
     re.compile(r"不清晰"),
 )
+_THREAD_LOCAL = threading.local()
 
 
 def is_remote_image(value: str) -> bool:
     return value.startswith("http://") or value.startswith("https://") or value.startswith("data:image")
+
+
+def default_num_workers() -> int:
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(8, cpu_count))
 
 
 @dataclass
@@ -92,6 +101,27 @@ class TeacherGenerationConfig:
     resume: bool = True
     filter_low_quality: bool = True
     max_uncertain_main_lines: int = 1
+    num_workers: int = default_num_workers()
+
+
+@dataclass(frozen=True)
+class TeacherTaskContext:
+    index: int
+    record_id: str
+    image_value: str
+    student_prompt: str
+    teacher_prompt: str
+    image_path: Path | str
+
+
+@dataclass
+class TeacherTaskResult:
+    index: int
+    llava_record: dict[str, Any] | None = None
+    log_records: list[dict[str, Any]] = field(default_factory=list)
+    generated: int = 0
+    failed: int = 0
+    filtered: int = 0
 
 
 def _load_manifest(manifest_path: Path) -> list[dict[str, Any]]:
@@ -183,6 +213,14 @@ def build_image_url_payload(image_path: Path | str) -> str:
     return encode_image_as_data_url(image_path)
 
 
+def _get_requests_session() -> requests.Session:
+    session = getattr(_THREAD_LOCAL, "requests_session", None)
+    if session is None:
+        session = requests.Session()
+        _THREAD_LOCAL.requests_session = session
+    return session
+
+
 def call_openai_compatible_api(
     *,
     api_base: str,
@@ -218,7 +256,7 @@ def call_openai_compatible_api(
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
-    response = requests.post(url, headers=headers, json=payload, timeout=request_timeout)
+    response = _get_requests_session().post(url, headers=headers, json=payload, timeout=request_timeout)
     response.raise_for_status()
     response_payload = response.json()
     return extract_message_text(response_payload)
@@ -242,6 +280,11 @@ def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _sleep_if_configured(config: TeacherGenerationConfig) -> None:
+    if config.sleep_seconds > 0:
+        time.sleep(config.sleep_seconds)
 
 
 def _matches_any(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
@@ -326,24 +369,117 @@ def evaluate_palmistry_quality(payload: dict[str, Any], *, max_uncertain_main_li
     return issues
 
 
+def _process_teacher_record(context: TeacherTaskContext, config: TeacherGenerationConfig) -> TeacherTaskResult:
+    result = TeacherTaskResult(index=context.index)
+
+    for attempt in range(1, config.max_retries + 1):
+        raw_text = ""
+        try:
+            raw_text = call_openai_compatible_api(
+                api_base=config.api_base,
+                api_key=config.api_key,
+                model=config.model,
+                prompt=context.teacher_prompt,
+                image_path=context.image_path,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                request_timeout=config.request_timeout,
+                json_mode=config.json_mode,
+            )
+            payload = load_palmistry_payload(raw_text)
+            payload, sanitation_issues = sanitize_palmistry_payload(payload)
+            errors = validate_palmistry_payload(payload)
+            if errors:
+                raise ValueError("; ".join(errors[:5]))
+
+            canonical_text = canonicalize_palmistry_json(payload)
+            quality_issues = (
+                evaluate_palmistry_quality(payload, max_uncertain_main_lines=config.max_uncertain_main_lines)
+                if config.filter_low_quality
+                else []
+            )
+            if quality_issues:
+                result.log_records.append(
+                    {
+                        "id": context.record_id,
+                        "image": context.image_value,
+                        "student_prompt": context.student_prompt,
+                        "teacher_prompt": context.teacher_prompt,
+                        "assistant": canonical_text,
+                        "teacher_model": config.model,
+                        "attempt": attempt,
+                        "status": "filtered",
+                        "quality_issues": sanitation_issues + quality_issues,
+                    }
+                )
+                if attempt == config.max_retries:
+                    result.filtered = 1
+                    _sleep_if_configured(config)
+                    return result
+                _sleep_if_configured(config)
+                continue
+
+            log_record = {
+                "id": context.record_id,
+                "image": context.image_value,
+                "student_prompt": context.student_prompt,
+                "teacher_prompt": context.teacher_prompt,
+                "assistant": canonical_text,
+                "teacher_model": config.model,
+                "status": "ok",
+            }
+            if sanitation_issues:
+                log_record["sanitation_issues"] = sanitation_issues
+            result.log_records.append(log_record)
+            result.llava_record = build_llava_sft_record(
+                context.record_id,
+                context.image_value,
+                canonical_text,
+                student_prompt=context.student_prompt,
+            )
+            result.generated = 1
+            _sleep_if_configured(config)
+            return result
+        except Exception as exc:
+            result.log_records.append(
+                {
+                    "id": context.record_id,
+                    "image": context.image_value,
+                    "teacher_model": config.model,
+                    "attempt": attempt,
+                    "status": "error",
+                    "error": str(exc),
+                    "raw_text": raw_text[:4000],
+                }
+            )
+            if attempt == config.max_retries:
+                result.failed = 1
+                _sleep_if_configured(config)
+                return result
+            _sleep_if_configured(config)
+
+    return result
+
+
 def generate_sft_dataset(config: TeacherGenerationConfig) -> dict[str, Any]:
     records = load_teacher_records(config.manifest_path, config.image_dir, config.limit)
     success_map = _load_success_map(config.output_jsonl) if config.resume and config.output_jsonl else {}
 
-    llava_records: list[dict[str, Any]] = []
+    llava_records: list[dict[str, Any] | None] = [None] * len(records)
+    pending_contexts: list[TeacherTaskContext] = []
     generated = 0
     skipped = 0
     failed = 0
     filtered = 0
 
-    for record in records:
+    for index, record in enumerate(records):
         record_id = str(record.get("id") or Path(record["image"]).stem)
         image_value = str(record["image"])
         student_prompt = str(record.get("student_prompt") or config.student_prompt)
         teacher_prompt = str(record.get("teacher_prompt") or config.teacher_prompt)
 
         if record_id in success_map:
-            llava_records.append(
+            llava_records[index] = (
                 build_llava_sft_record(
                     record_id,
                     image_value,
@@ -355,106 +491,54 @@ def generate_sft_dataset(config: TeacherGenerationConfig) -> dict[str, Any]:
             continue
 
         image_path = resolve_image_path(record, manifest_path=config.manifest_path, image_dir=config.image_dir)
-        last_error = ""
-        for attempt in range(1, config.max_retries + 1):
-            raw_text = ""
-            try:
-                raw_text = call_openai_compatible_api(
-                    api_base=config.api_base,
-                    api_key=config.api_key,
-                    model=config.model,
-                    prompt=teacher_prompt,
-                    image_path=image_path,
-                    temperature=config.temperature,
-                    max_tokens=config.max_tokens,
-                    request_timeout=config.request_timeout,
-                    json_mode=config.json_mode,
-                )
-                payload = load_palmistry_payload(raw_text)
-                payload, sanitation_issues = sanitize_palmistry_payload(payload)
-                errors = validate_palmistry_payload(payload)
-                if errors:
-                    raise ValueError("; ".join(errors[:5]))
+        pending_contexts.append(
+            TeacherTaskContext(
+                index=index,
+                record_id=record_id,
+                image_value=image_value,
+                student_prompt=student_prompt,
+                teacher_prompt=teacher_prompt,
+                image_path=image_path,
+            )
+        )
 
-                canonical_text = canonicalize_palmistry_json(payload)
-                quality_issues = (
-                    evaluate_palmistry_quality(payload, max_uncertain_main_lines=config.max_uncertain_main_lines)
-                    if config.filter_low_quality
-                    else []
-                )
-                if quality_issues:
+    if pending_contexts:
+        with ThreadPoolExecutor(max_workers=max(1, config.num_workers)) as executor:
+            future_to_context: dict[Future[TeacherTaskResult], TeacherTaskContext] = {
+                executor.submit(_process_teacher_record, context, config): context for context in pending_contexts
+            }
+            for future in as_completed(future_to_context):
+                context = future_to_context[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    failed += 1
                     if config.output_jsonl:
                         _append_jsonl(
                             config.output_jsonl,
                             {
-                                "id": record_id,
-                                "image": image_value,
-                                "student_prompt": student_prompt,
-                                "teacher_prompt": teacher_prompt,
-                                "assistant": canonical_text,
+                                "id": context.record_id,
+                                "image": context.image_value,
                                 "teacher_model": config.model,
-                                "attempt": attempt,
-                                "status": "filtered",
-                                "quality_issues": sanitation_issues + quality_issues,
+                                "status": "error",
+                                "error": f"worker_crash: {exc}",
                             },
                         )
-                    if attempt == config.max_retries:
-                        filtered += 1
-                        break
-                    if config.sleep_seconds > 0:
-                        time.sleep(config.sleep_seconds)
                     continue
 
-                log_record = {
-                    "id": record_id,
-                    "image": image_value,
-                    "student_prompt": student_prompt,
-                    "teacher_prompt": teacher_prompt,
-                    "assistant": canonical_text,
-                    "teacher_model": config.model,
-                    "status": "ok",
-                }
-                if sanitation_issues:
-                    log_record["sanitation_issues"] = sanitation_issues
                 if config.output_jsonl:
-                    _append_jsonl(config.output_jsonl, log_record)
+                    for log_record in result.log_records:
+                        _append_jsonl(config.output_jsonl, log_record)
 
-                llava_records.append(
-                    build_llava_sft_record(
-                        record_id,
-                        image_value,
-                        canonical_text,
-                        student_prompt=student_prompt,
-                    )
-                )
-                generated += 1
-                break
-            except Exception as exc:
-                last_error = str(exc)
-                if config.output_jsonl:
-                    _append_jsonl(
-                        config.output_jsonl,
-                        {
-                            "id": record_id,
-                            "image": image_value,
-                            "teacher_model": config.model,
-                            "attempt": attempt,
-                            "status": "error",
-                            "error": last_error,
-                            "raw_text": raw_text[:4000],
-                        },
-                    )
-                if attempt == config.max_retries:
-                    failed += 1
-                elif config.sleep_seconds > 0:
-                    time.sleep(config.sleep_seconds)
-
-        if config.sleep_seconds > 0:
-            time.sleep(config.sleep_seconds)
+                if result.llava_record is not None:
+                    llava_records[result.index] = result.llava_record
+                generated += result.generated
+                failed += result.failed
+                filtered += result.filtered
 
     config.output_json.parent.mkdir(parents=True, exist_ok=True)
     config.output_json.write_text(
-        json.dumps(llava_records, ensure_ascii=False, indent=2),
+        json.dumps([record for record in llava_records if record is not None], ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -464,6 +548,7 @@ def generate_sft_dataset(config: TeacherGenerationConfig) -> dict[str, Any]:
         "skipped": skipped,
         "failed": failed,
         "filtered": filtered,
+        "num_workers": max(1, config.num_workers),
         "output_json": str(config.output_json),
         "output_jsonl": str(config.output_jsonl) if config.output_jsonl else None,
     }
