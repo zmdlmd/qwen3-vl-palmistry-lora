@@ -16,8 +16,9 @@ fi
 
 BASE_MODEL_PATH="${BASE_MODEL_PATH:-Qwen/Qwen3-VL-8B-Instruct}"
 LORA_WEIGHT_PATH="${LORA_WEIGHT_PATH:-}"
+PALMISTRY_DATA_ROOT="${PALMISTRY_DATA_ROOT:-/root/autodl-tmp/data/Palmistry.v2i.coco}"
 DATA_PATH="${DATA_PATH:-${PROJECT_ROOT}/artifacts/palmistry_llava.generated.json}"
-IMAGE_FOLDER="${IMAGE_FOLDER:-${PROJECT_ROOT}/data/images}"
+IMAGE_FOLDER="${IMAGE_FOLDER:-${PALMISTRY_DATA_ROOT}}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/output/palmistry_grpo_qwen3_vl_8b}"
 
 NUM_DEVICES="${NUM_DEVICES:-4}"

@@ -15,8 +15,9 @@ if [[ $# -eq 1 ]]; then
 fi
 
 BASE_MODEL_PATH="${BASE_MODEL_PATH:-Qwen/Qwen3-VL-8B-Instruct}"
-DATA_PATH="${DATA_PATH:-${PROJECT_ROOT}/data/palmistry_llava.json}"
-IMAGE_FOLDER="${IMAGE_FOLDER:-${PROJECT_ROOT}/data/images}"
+PALMISTRY_DATA_ROOT="${PALMISTRY_DATA_ROOT:-/root/autodl-tmp/data/Palmistry.v2i.coco}"
+DATA_PATH="${DATA_PATH:-${PROJECT_ROOT}/artifacts/palmistry_llava.generated.json}"
+IMAGE_FOLDER="${IMAGE_FOLDER:-${PALMISTRY_DATA_ROOT}}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/output/palmistry_lora_qwen3_vl_8b}"
 
 NUM_DEVICES="${NUM_DEVICES:-4}"

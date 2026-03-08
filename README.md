@@ -165,11 +165,13 @@ pip install flash-attn --no-build-isolation
 cp configs/palmistry/train_lora.env.example configs/palmistry/train_lora.env
 ```
 
+On AutoDL, the palm-image root now defaults to `/root/autodl-tmp/data/Palmistry.v2i.coco`.
+
 Then edit:
 
 - `BASE_MODEL_PATH`
+- `PALMISTRY_DATA_ROOT`
 - `DATA_PATH`
-- `IMAGE_FOLDER`
 - `OUTPUT_DIR`
 
 ### 3. Launch LoRA Training
@@ -184,6 +186,8 @@ bash scripts/palmistry/train_lora.sh configs/palmistry/train_lora.env
 cp configs/palmistry/teacher_generation.env.example configs/palmistry/teacher_generation.env
 bash scripts/palmistry/generate_teacher_data.sh configs/palmistry/teacher_generation.env
 ```
+
+By default, the teacher pipeline reads from `/root/autodl-tmp/data/Palmistry.v2i.coco/manifests/teacher_all.jsonl` and resolves images under `/root/autodl-tmp/data/Palmistry.v2i.coco`.
 
 The teacher API is OpenAI-compatible. For DashScope, Qwen3.5 multimodal models fit this workflow, while the actual API `model` value can be `qwen-plus` or `qwen-vl-plus`.
 
@@ -230,6 +234,8 @@ Recommended usage:
 cp configs/palmistry/grpo.env.example configs/palmistry/grpo.env
 bash scripts/palmistry/train_grpo.sh configs/palmistry/grpo.env
 ```
+
+The GRPO wrappers also default `IMAGE_FOLDER` to `/root/autodl-tmp/data/Palmistry.v2i.coco` so the full dataset stays on the local AutoDL disk rather than the slower `/autodl-fs` mount.
 
 For a second report-oriented GRPO stage:
 

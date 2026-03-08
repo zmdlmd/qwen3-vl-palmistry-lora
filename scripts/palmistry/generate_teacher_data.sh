@@ -17,8 +17,9 @@ fi
 OPENAI_API_KEY="${OPENAI_API_KEY:-${DASHSCOPE_API_KEY:-}}"
 TEACHER_API_BASE="${TEACHER_API_BASE:-https://api.openai.com/v1}"
 TEACHER_MODEL="${TEACHER_MODEL:-}"
-TEACHER_MANIFEST="${TEACHER_MANIFEST:-}"
-TEACHER_IMAGE_DIR="${TEACHER_IMAGE_DIR:-${PROJECT_ROOT}/data/images}"
+PALMISTRY_DATA_ROOT="${PALMISTRY_DATA_ROOT:-/root/autodl-tmp/data/Palmistry.v2i.coco}"
+TEACHER_MANIFEST="${TEACHER_MANIFEST:-${PALMISTRY_DATA_ROOT}/manifests/teacher_all.jsonl}"
+TEACHER_IMAGE_DIR="${TEACHER_IMAGE_DIR:-${PALMISTRY_DATA_ROOT}}"
 TEACHER_OUTPUT_JSON="${TEACHER_OUTPUT_JSON:-${PROJECT_ROOT}/artifacts/palmistry_llava.generated.json}"
 TEACHER_OUTPUT_JSONL="${TEACHER_OUTPUT_JSONL:-${PROJECT_ROOT}/artifacts/palmistry_teacher_generations.jsonl}"
 TEACHER_TEMPERATURE="${TEACHER_TEMPERATURE:-0.2}"
@@ -35,6 +36,16 @@ fi
 
 if [[ -z "${TEACHER_MODEL}" ]]; then
   echo "TEACHER_MODEL is required." >&2
+  exit 1
+fi
+
+if [[ -n "${TEACHER_MANIFEST}" && ! -f "${TEACHER_MANIFEST}" ]]; then
+  echo "TEACHER_MANIFEST does not exist: ${TEACHER_MANIFEST}" >&2
+  exit 1
+fi
+
+if [[ ! -d "${TEACHER_IMAGE_DIR}" ]]; then
+  echo "TEACHER_IMAGE_DIR does not exist: ${TEACHER_IMAGE_DIR}" >&2
   exit 1
 fi
 
