@@ -62,16 +62,29 @@ Palmistry inference pipeline
 CLI / Gradio Chinese report generation
 ```
 
+## Extended Workflow
+
+This repository now supports two complementary stages beyond basic SFT:
+
+1. Automated teacher-data distillation  
+   Call a large multimodal model through an OpenAI-compatible API, validate the returned palmistry JSON, and write the result directly into a LLaVA-style SFT dataset.
+
+2. GRPO post-training  
+   Start from a base model or an existing SFT LoRA adapter, then optimize with palmistry-specific reward functions.
+
 ## What Is Actually In Here
 
 - Core SFT trainer: [src/train/train_sft.py](src/train/train_sft.py)
 - Palmistry training wrapper: [scripts/palmistry/train_lora.sh](scripts/palmistry/train_lora.sh)
 - Palmistry prompts: [src/palmistry/prompts.py](src/palmistry/prompts.py)
+- Palmistry schema + teacher pipeline: [src/palmistry/schema.py](src/palmistry/schema.py), [src/palmistry/teacher.py](src/palmistry/teacher.py)
 - Palmistry inference pipeline: [src/palmistry/pipeline.py](src/palmistry/pipeline.py)
 - CLI inference: [tools/infer_palmistry.py](tools/infer_palmistry.py)
+- Teacher data generation CLI: [tools/generate_teacher_dataset.py](tools/generate_teacher_dataset.py)
 - Gradio demo: [apps/gradio_palmistry.py](apps/gradio_palmistry.py)
 - Adapter export tool: [tools/export_peft_adapter.py](tools/export_peft_adapter.py)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
+- Distillation + GRPO notes: [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 - Dataset notes: [data/README.md](data/README.md)
 
 ## Repository Layout
@@ -159,6 +172,19 @@ Then edit:
 bash scripts/palmistry/train_lora.sh configs/palmistry/train_lora.env
 ```
 
+### 3.5. Generate Teacher Distillation Data
+
+```bash
+cp configs/palmistry/teacher_generation.env.example configs/palmistry/teacher_generation.env
+bash scripts/palmistry/generate_teacher_data.sh configs/palmistry/teacher_generation.env
+```
+
+Main entrypoints:
+
+- [tools/generate_teacher_dataset.py](tools/generate_teacher_dataset.py)
+- [scripts/palmistry/generate_teacher_data.sh](scripts/palmistry/generate_teacher_data.sh)
+- [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
+
 ### 4. Run CLI Inference
 
 ```bash
@@ -176,6 +202,23 @@ python -m apps.gradio_palmistry \
   --base-model /path/to/Qwen3-VL-8B-Instruct \
   --lora-path ./output/palmistry_lora_qwen3_vl_8b
 ```
+
+## GRPO Reinforcement Learning
+
+The repository now supports palmistry-specific GRPO training with configurable reward modules.
+
+Recommended usage:
+
+```bash
+cp configs/palmistry/grpo.env.example configs/palmistry/grpo.env
+bash scripts/palmistry/train_grpo.sh configs/palmistry/grpo.env
+```
+
+Key points:
+
+- `reward_funcs_module` is now configurable
+- `src.palmistry.reward_funcs_structured` provides structured palmistry rewards
+- `lora_weight_path` can be used to initialize GRPO from an existing SFT LoRA adapter
 
 ## Data Format
 

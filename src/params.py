@@ -250,6 +250,10 @@ class GRPOArguments(GRPOConfigTRL):
     merger_lr: Optional[float] = None
     lora_namespan_exclude: str = field(default=None, metadata={"help": "List of namespan to exclude for LoRA"})
     num_lora_modules: int = -1
+    reward_funcs_module: str = field(
+        default="src.train.reward_funcs",
+        metadata={"help": "Python module path used to load reward functions."},
+    )
     beta: float = field(
         default=0.04,
         metadata={

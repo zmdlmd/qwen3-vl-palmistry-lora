@@ -1,6 +1,6 @@
 import os
 import torch
-from peft import LoraConfig
+from peft import LoraConfig, PeftModel
 import ast
 import pathlib
 from transformers import (
@@ -199,7 +199,14 @@ def train():
 
     peft_config = None
 
-    if training_args.lora_enable:
+    if training_args.lora_enable and training_args.lora_weight_path:
+        rank0_print(f"Loading trainable LoRA weights from {training_args.lora_weight_path}")
+        model = PeftModel.from_pretrained(
+            model,
+            training_args.lora_weight_path,
+            is_trainable=True,
+        )
+    elif training_args.lora_enable:
         lora_namespan_exclude = training_args.lora_namespan_exclude
         peft_config = LoraConfig(
             r=training_args.lora_rank,
@@ -235,7 +242,7 @@ def train():
                                               processor=processor,
                                               data_args=data_args)
 
-    reward_funcs = load_reward_funcs("src.train.reward_funcs")
+    reward_funcs = load_reward_funcs(training_args.reward_funcs_module)
 
     trainer = QwenGRPOTrainer(
         model=model,
