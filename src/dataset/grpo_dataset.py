@@ -1,5 +1,6 @@
 import copy
 import os
+import re
 from typing import Dict
 import torch
 import transformers
@@ -7,13 +8,17 @@ import ujson as json
 from torch.utils.data import Dataset
 
 from src.params import DataArguments
-from src.constants import (
-    DEFAULT_IM_START_TOKEN,
-    DEFAULT_IM_END_TOKEN,
-    SYSTEM_MESSAGE,
-)
+from src.constants import DEFAULT_IMAGE_TOKEN, DEFAULT_VIDEO_TOKEN, SYSTEM_MESSAGE, VISION_END_TOKEN, VISION_START_TOKEN
 
 from .data_utils import get_image_info, get_video_info, llava_to_openai
+
+
+def strip_visual_placeholders(text: str) -> str:
+    image_token = re.escape(VISION_START_TOKEN + DEFAULT_IMAGE_TOKEN + VISION_END_TOKEN)
+    video_token = re.escape(VISION_START_TOKEN + DEFAULT_VIDEO_TOKEN + VISION_END_TOKEN)
+    text = re.sub(rf"\s*{image_token}\s*", "", text)
+    text = re.sub(rf"\s*{video_token}\s*", "", text)
+    return text.strip()
 
 class GRPODataset(Dataset):
     """Dataset for DPO training"""
@@ -123,15 +128,14 @@ class GRPODataset(Dataset):
 
         user_input = conversations[0]
         gpt_response = conversations[1]
-
-        system_message = f"{DEFAULT_IM_START_TOKEN}system\n{SYSTEM_MESSAGE}{DEFAULT_IM_END_TOKEN}\n"
-        user_message = f"{DEFAULT_IM_START_TOKEN}{user_input['role']}\n{user_input['content']}{DEFAULT_IM_END_TOKEN}\n{DEFAULT_IM_START_TOKEN}{gpt_response['role']}\n"
-
-        user_prompt = system_message + user_message
-        assistant_prompt = gpt_response['content']
+        prompt_messages = [
+            {"role": "system", "content": SYSTEM_MESSAGE},
+            {"role": user_input["role"], "content": strip_visual_placeholders(user_input["content"])},
+        ]
+        assistant_prompt = gpt_response["content"]
 
         data_dict = dict(
-            prompt=user_prompt,
+            prompt=prompt_messages,
             assistant=assistant_prompt,
             images=images,
         )

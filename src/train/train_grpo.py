@@ -11,6 +11,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
     Qwen3VLForConditionalGeneration
 )
+from transformers.trainer_utils import SaveStrategy
 
 from src.trainer import QwenGRPOTrainer
 from src.dataset import make_grpo_data_module
@@ -258,6 +259,10 @@ def train():
         trainer.train(resume_from_checkpoint=True)
     else:
         trainer.train()
+
+    if training_args.save_strategy == SaveStrategy.NO:
+        rank0_print("Skipping final GRPO artifact save because save_strategy=no.")
+        return
 
     trainer.save_state()
 

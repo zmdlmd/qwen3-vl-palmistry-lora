@@ -22,15 +22,35 @@ UNCERTAINTY_TERMS = ("难以判断", "图像不够清晰", "可见信息有限",
 CHINESE_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
+def _as_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        content = value.get("content", "")
+        if isinstance(content, list):
+            chunks: list[str] = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text = part.get("text")
+                    if isinstance(text, str) and text.strip():
+                        chunks.append(text.strip())
+            return "\n".join(chunks)
+        return _as_text(content)
+    if isinstance(value, list):
+        chunks = [_as_text(item) for item in value]
+        return "\n".join(chunk for chunk in chunks if chunk)
+    return ""
+
+
 def _safe_parse_payload(text: str) -> dict[str, Any] | None:
     try:
-        return load_palmistry_payload(text)
+        return load_palmistry_payload(_as_text(text))
     except Exception:
         return None
 
 
 def _strip_report(text: str) -> str:
-    return re.sub(r"\s+", "", text or "")
+    return re.sub(r"\s+", "", _as_text(text))
 
 
 def _char_ngram_set(text: str, n: int = 2) -> set[str]:
@@ -41,7 +61,7 @@ def _char_ngram_set(text: str, n: int = 2) -> set[str]:
 
 
 def _report_char_count(text: str) -> int:
-    return len(CHINESE_CHAR_RE.findall(text or ""))
+    return len(CHINESE_CHAR_RE.findall(_as_text(text)))
 
 
 def _reference_text(payload: dict[str, Any]) -> str:
@@ -68,6 +88,7 @@ def _reference_text(payload: dict[str, Any]) -> str:
 
 
 def _ordered_section_score(text: str) -> float:
+    text = _as_text(text)
     last_pos = -1
     hits = 0
 
@@ -90,6 +111,7 @@ def _ordered_section_score(text: str) -> float:
 
 
 def _required_line_mention_score(text: str) -> float:
+    text = _as_text(text)
     hits = sum(1 for line_name in REQUIRED_LINE_NAMES if line_name in text)
     return hits / len(REQUIRED_LINE_NAMES)
 
@@ -106,6 +128,7 @@ def _reference_uncertainty_score(payload: dict[str, Any]) -> float:
 def report_format_reward(completions, **kwargs):
     rewards = []
     for completion in completions:
+        completion = _as_text(completion)
         if "{" in completion or "}" in completion or "```" in completion:
             rewards.append(0.0)
             continue
@@ -122,6 +145,7 @@ def report_format_reward(completions, **kwargs):
 def section_structure_reward(completions, **kwargs):
     rewards = []
     for completion in completions:
+        completion = _as_text(completion)
         rewards.append(0.6 * _ordered_section_score(completion) + 0.4 * _required_line_mention_score(completion))
     return rewards
 
@@ -129,6 +153,7 @@ def section_structure_reward(completions, **kwargs):
 def reference_alignment_reward(completions, assistant, **kwargs):
     rewards = []
     for completion, reference in zip(completions, assistant):
+        completion = _as_text(completion)
         ref_payload = _safe_parse_payload(reference)
         if ref_payload is None:
             rewards.append(0.0)
@@ -149,6 +174,7 @@ def reference_alignment_reward(completions, assistant, **kwargs):
 def uncertainty_honesty_reward(completions, assistant, **kwargs):
     rewards = []
     for completion, reference in zip(completions, assistant):
+        completion = _as_text(completion)
         ref_payload = _safe_parse_payload(reference)
         if ref_payload is None:
             rewards.append(0.0)
@@ -167,6 +193,7 @@ def uncertainty_honesty_reward(completions, assistant, **kwargs):
 def safety_language_reward(completions, **kwargs):
     rewards = []
     for completion in completions:
+        completion = _as_text(completion)
         if any(term in completion for term in BANNED_TERMS):
             rewards.append(0.0)
             continue

@@ -13,9 +13,29 @@ from .schema import (
 )
 
 
-def _safe_parse_payload(text: str) -> dict[str, Any] | None:
+def _as_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        content = value.get("content", "")
+        if isinstance(content, list):
+            chunks: list[str] = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text = part.get("text")
+                    if isinstance(text, str) and text.strip():
+                        chunks.append(text.strip())
+            return "\n".join(chunks)
+        return _as_text(content)
+    if isinstance(value, list):
+        chunks = [_as_text(item) for item in value]
+        return "\n".join(chunk for chunk in chunks if chunk)
+    return ""
+
+
+def _safe_parse_payload(text: Any) -> dict[str, Any] | None:
     try:
-        return load_palmistry_payload(text)
+        return load_palmistry_payload(_as_text(text))
     except Exception:
         return None
 
@@ -46,7 +66,7 @@ def _report_field_coverage(payload: dict[str, Any]) -> float:
 
 
 def _char_ngram_set(text: str, n: int = 2) -> set[str]:
-    compact = re.sub(r"\s+", "", text)
+    compact = re.sub(r"\s+", "", _as_text(text))
     if len(compact) < n:
         return {compact} if compact else set()
     return {compact[index : index + n] for index in range(len(compact) - n + 1)}
