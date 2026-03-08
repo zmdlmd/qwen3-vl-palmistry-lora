@@ -1,0 +1,56 @@
+<svg width="1600" height="520" viewBox="0 0 1600 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="520" fill="#07111F"/>
+  <rect x="0" y="0" width="1600" height="520" fill="url(#bg)"/>
+  <circle cx="231" cy="108" r="190" fill="url(#glowA)" opacity="0.7"/>
+  <circle cx="1329" cy="419" r="228" fill="url(#glowB)" opacity="0.7"/>
+  <rect x="60" y="56" width="1480" height="408" rx="28" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.12)"/>
+  <rect x="106" y="108" width="196" height="196" rx="26" fill="#10233B" stroke="#274C74"/>
+  <path d="M182 276C174 240 173 205 174 174C175 151 191 138 206 139C220 140 228 152 229 170V216H237V158C238 139 250 129 264 129C280 130 289 143 288 164V222H296V181C297 162 310 152 325 153C341 154 349 168 348 188V278C348 309 334 329 309 342L276 359C260 367 242 371 224 371H205C167 371 139 346 132 310L126 278C123 262 132 250 145 247C159 244 170 251 174 265L182 276Z" fill="url(#hand)" stroke="#FFBE7A" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M198 238C221 237 240 235 260 228C282 220 302 207 322 188" stroke="#FFD39F" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+  <path d="M187 279C214 291 243 293 274 289C302 286 327 276 349 258" stroke="#FFD39F" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+  <path d="M194 322C223 334 256 336 290 331" stroke="#FFD39F" stroke-width="6" stroke-linecap="round" opacity="0.65"/>
+  <text x="370" y="176" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="68" font-weight="700">
+    Qwen3-VL Palmistry LoRA
+  </text>
+  <text x="370" y="233" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="28">
+    Hand-image understanding, LoRA fine-tuning, and Chinese palmistry report generation
+  </text>
+  <rect x="371" y="277" width="182" height="46" rx="23" fill="#F97316"/>
+  <text x="403" y="307" fill="#FFF7ED" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+    GPT-5 Teacher Data
+  </text>
+  <rect x="569" y="277" width="139" height="46" rx="23" fill="#0F766E"/>
+  <text x="605" y="307" fill="#ECFDF5" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+    LoRA SFT
+  </text>
+  <rect x="724" y="277" width="148" height="46" rx="23" fill="#2563EB"/>
+  <text x="759" y="307" fill="#EFF6FF" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+    Qwen3-VL
+  </text>
+  <rect x="888" y="277" width="243" height="46" rx="23" fill="#7C3AED"/>
+  <text x="921" y="307" fill="#F5F3FF" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+    Chinese Palmistry Reports
+  </text>
+  <text x="372" y="366" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="24">
+    Public repo, private data excluded, training core preserved from upstream.
+  </text>
+  <defs>
+    <linearGradient id="bg" x1="1600" y1="0" x2="0" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E293B"/>
+      <stop offset="0.45" stop-color="#0F172A"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(231 108) rotate(90) scale(190)">
+      <stop stop-color="#F97316"/>
+      <stop offset="1" stop-color="#F97316" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1329 419) rotate(90) scale(228)">
+      <stop stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#2563EB" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hand" x1="126" y1="129" x2="349" y2="371" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FDBA74"/>
+      <stop offset="1" stop-color="#FB923C"/>
+    </linearGradient>
+  </defs>
+</svg>
