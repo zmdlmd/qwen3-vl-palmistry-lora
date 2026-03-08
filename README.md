@@ -18,14 +18,14 @@
 
 ## 中文简介
 
-这是一个基于 `Qwen3-VL` 的手相图像 LoRA 微调项目。当前项目的训练思路是：
+这是一个基于 `Qwen3-VL` 的手相图像 LoRA 微调项目。其训练流程包括：
 
 - 用 GPT-5 生成手相结构化标注作为 teacher 数据
 - 用 `Qwen3-VL` 作为 student 模型
 - 用 LoRA SFT 学习“读取手部图片并输出掌纹分析”
 - 在推理阶段再通过 prompt，把结构化理解展开成自然中文手相报告
 
-这个仓库保留了上游 `Qwen-VL-Series-Finetune` 的通用训练内核，同时把你自己的 palmistry 项目层独立整理出来，适合直接公开到 GitHub。
+该仓库保留了上游 `Qwen-VL-Series-Finetune` 的通用训练内核，同时将 palmistry 任务相关的数据、训练、推理与展示层整理为独立模块，适合公开发布与持续迭代。
 
 ## English Overview
 
