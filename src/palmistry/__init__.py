@@ -1,4 +1,3 @@
-from .pipeline import PalmistryPipeline
 from .prompts import (
     DEFAULT_STUDENT_STRUCTURED_PROMPT,
     STYLE_OPTIONS,
@@ -17,3 +16,11 @@ __all__ = [
     "build_teacher_structured_prompt",
     "normalize_style",
 ]
+
+
+def __getattr__(name: str):
+    if name == "PalmistryPipeline":
+        from .pipeline import PalmistryPipeline
+
+        return PalmistryPipeline
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

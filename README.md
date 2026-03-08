@@ -70,7 +70,7 @@ This repository now supports two complementary stages beyond basic SFT:
    Call a large multimodal model through an OpenAI-compatible API, validate the returned palmistry JSON, and write the result directly into a LLaVA-style SFT dataset.
 
 2. GRPO post-training  
-   Start from a base model or an existing SFT LoRA adapter, then optimize with palmistry-specific reward functions.
+   Start from a base model or an existing SFT LoRA adapter, then optimize with palmistry-specific reward functions. The repo now supports both structured-JSON GRPO and report-style GRPO.
 
 ## What Is Actually In Here
 
@@ -78,9 +78,11 @@ This repository now supports two complementary stages beyond basic SFT:
 - Palmistry training wrapper: [scripts/palmistry/train_lora.sh](scripts/palmistry/train_lora.sh)
 - Palmistry prompts: [src/palmistry/prompts.py](src/palmistry/prompts.py)
 - Palmistry schema + teacher pipeline: [src/palmistry/schema.py](src/palmistry/schema.py), [src/palmistry/teacher.py](src/palmistry/teacher.py)
+- Palmistry GRPO rewards: [src/palmistry/reward_funcs_structured.py](src/palmistry/reward_funcs_structured.py), [src/palmistry/reward_funcs_report.py](src/palmistry/reward_funcs_report.py)
 - Palmistry inference pipeline: [src/palmistry/pipeline.py](src/palmistry/pipeline.py)
 - CLI inference: [tools/infer_palmistry.py](tools/infer_palmistry.py)
 - Teacher data generation CLI: [tools/generate_teacher_dataset.py](tools/generate_teacher_dataset.py)
+- Report GRPO dataset builder: [tools/build_report_grpo_dataset.py](tools/build_report_grpo_dataset.py)
 - Gradio demo: [apps/gradio_palmistry.py](apps/gradio_palmistry.py)
 - Adapter export tool: [tools/export_peft_adapter.py](tools/export_peft_adapter.py)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
@@ -95,7 +97,11 @@ This repository now supports two complementary stages beyond basic SFT:
 │   └── gradio_palmistry.py
 ├── configs/
 │   └── palmistry/
+│       ├── grpo.env.example
+│       ├── grpo_report.env.example
 │       ├── inference.env.example
+│       ├── report_grpo_data.env.example
+│       ├── teacher_generation.env.example
 │       └── train_lora.env.example
 ├── data/
 │   ├── README.md
@@ -127,12 +133,12 @@ One important project-specific detail:
 
 - the current `data/palmistry_llava.json` labels are mainly GPT-5 generated structured JSON strings
 - so the LoRA is learning visual palm-line interpretation and structured analysis first
-- the final long-form natural Chinese report style is mostly controlled by inference prompts
+- the final long-form natural Chinese report style can then be improved further with the report-oriented GRPO stage
 
 That means this repo is best understood as:
 
 - a hand-image understanding LoRA
-- plus a palmistry report generation prompt layer
+- plus a palmistry report generation layer that can be shaped by prompts and report GRPO
 
 ## Quick Start
 
@@ -187,6 +193,15 @@ Main entrypoints:
 - [scripts/palmistry/generate_teacher_data.sh](scripts/palmistry/generate_teacher_data.sh)
 - [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 
+### 3.6. Prepare Report-Style GRPO Data
+
+```bash
+cp configs/palmistry/report_grpo_data.env.example configs/palmistry/report_grpo_data.env
+bash scripts/palmistry/prepare_report_grpo_dataset.sh configs/palmistry/report_grpo_data.env
+```
+
+This converts the structured teacher dataset into a GRPO dataset whose prompt asks for a natural Chinese report, while keeping the original structured JSON as the reward reference.
+
 ### 4. Run CLI Inference
 
 ```bash
@@ -216,11 +231,20 @@ cp configs/palmistry/grpo.env.example configs/palmistry/grpo.env
 bash scripts/palmistry/train_grpo.sh configs/palmistry/grpo.env
 ```
 
+For a second report-oriented GRPO stage:
+
+```bash
+cp configs/palmistry/grpo_report.env.example configs/palmistry/grpo_report.env
+bash scripts/palmistry/train_grpo_report.sh configs/palmistry/grpo_report.env
+```
+
 Key points:
 
 - `reward_funcs_module` is now configurable
 - `src.palmistry.reward_funcs_structured` provides structured palmistry rewards
+- `src.palmistry.reward_funcs_report` optimizes the final natural-language Chinese report
 - `lora_weight_path` can be used to initialize GRPO from an existing SFT LoRA adapter
+- a practical order is SFT -> structured GRPO -> report GRPO
 
 ## Data Format
 

@@ -59,7 +59,10 @@ Main files:
 
 - [src/train/train_grpo.py](../src/train/train_grpo.py)
 - [src/palmistry/reward_funcs_structured.py](../src/palmistry/reward_funcs_structured.py)
+- [src/palmistry/reward_funcs_report.py](../src/palmistry/reward_funcs_report.py)
 - [scripts/palmistry/train_grpo.sh](../scripts/palmistry/train_grpo.sh)
+- [scripts/palmistry/train_grpo_report.sh](../scripts/palmistry/train_grpo_report.sh)
+- [tools/build_report_grpo_dataset.py](../tools/build_report_grpo_dataset.py)
 
 ## 4. Current Reward Design
 
@@ -73,9 +76,31 @@ The structured palmistry reward module currently combines:
 
 This is designed for the current structured-JSON supervision format. If you later switch GRPO to optimize long-form natural reports instead, the clean extension path is:
 
-1. create a new reward module such as `src.palmistry.reward_funcs_report`
-2. point `reward_funcs_module` to that module
-3. use report-style reference data instead of JSON-only references
+1. convert the teacher dataset into a report-oriented GRPO dataset
+2. point `reward_funcs_module` to `src.palmistry.reward_funcs_report`
+3. keep the teacher JSON as the reward reference while changing the prompt into a natural-report prompt
+
+The report reward module now combines:
+
+- report-format checks that reject JSON / code blocks
+- section-order and line-coverage checks
+- n-gram alignment against the structured teacher reference
+- uncertainty honesty when the palm image is hard to read
+- safety and non-diagnostic language checks
+
+Typical report-stage preparation:
+
+```bash
+cp configs/palmistry/report_grpo_data.env.example configs/palmistry/report_grpo_data.env
+bash scripts/palmistry/prepare_report_grpo_dataset.sh configs/palmistry/report_grpo_data.env
+```
+
+Typical report-stage training:
+
+```bash
+cp configs/palmistry/grpo_report.env.example configs/palmistry/grpo_report.env
+bash scripts/palmistry/train_grpo_report.sh configs/palmistry/grpo_report.env
+```
 
 ## 5. Recommended Training Order
 
@@ -83,7 +108,8 @@ The practical order is:
 
 1. API teacher generation
 2. LoRA SFT on the generated dataset
-3. GRPO initialized from the SFT adapter
-4. final inference prompting for natural report style
+3. structured GRPO initialized from the SFT adapter
+4. report GRPO initialized from the structured adapter
+5. final inference prompting for natural report style
 
 That order is much more stable than trying to jump directly from base model into GRPO.

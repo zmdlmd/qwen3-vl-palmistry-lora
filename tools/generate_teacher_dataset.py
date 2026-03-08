@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from src.palmistry import DEFAULT_STUDENT_STRUCTURED_PROMPT, build_teacher_structured_prompt
+from src.palmistry.prompts import DEFAULT_STUDENT_STRUCTURED_PROMPT, build_teacher_structured_prompt
 from src.palmistry.teacher import TeacherGenerationConfig, generate_sft_dataset
 
 
