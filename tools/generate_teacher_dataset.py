@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json-mode", action="store_true", help="Enable response_format=json_object if the provider supports it")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--no-resume", action="store_true", help="Do not reuse successful generations found in output-jsonl")
+    parser.add_argument("--no-quality-filter", action="store_true", help="Disable heuristic quality filtering for low-confidence teacher outputs")
+    parser.add_argument("--max-uncertain-main-lines", type=int, default=1, help="Maximum number of main lines that may remain uncertain before filtering a sample")
     return parser.parse_args()
 
 
@@ -69,6 +71,8 @@ def main() -> None:
         json_mode=args.json_mode,
         limit=args.limit,
         resume=not args.no_resume,
+        filter_low_quality=not args.no_quality_filter,
+        max_uncertain_main_lines=args.max_uncertain_main_lines,
     )
 
     summary = generate_sft_dataset(config)

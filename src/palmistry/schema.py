@@ -26,27 +26,29 @@ REQUIRED_REPORT_FIELDS = (
 )
 
 _CODE_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
 
 
-def extract_json_object(text: str) -> str:
+def _clean_json_candidate(text: str) -> str:
     candidate = text.strip()
+    candidate = _THINK_BLOCK_RE.sub("", candidate)
+    candidate = _THINK_TAG_RE.sub("", candidate).strip()
+
     code_block = _CODE_BLOCK_RE.search(candidate)
     if code_block:
         candidate = code_block.group(1).strip()
+    return candidate
 
-    if candidate.startswith("{") and candidate.endswith("}"):
-        return candidate
 
-    start = candidate.find("{")
-    if start == -1:
-        raise ValueError("No JSON object found in response.")
-
+def _extract_balanced_json_objects(candidate: str) -> list[str]:
+    objects: list[str] = []
+    start_index: int | None = None
     depth = 0
     in_string = False
     escaped = False
 
-    for index in range(start, len(candidate)):
-        char = candidate[index]
+    for index, char in enumerate(candidate):
         if in_string:
             if escaped:
                 escaped = False
@@ -58,14 +60,48 @@ def extract_json_object(text: str) -> str:
 
         if char == '"':
             in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return candidate[start : index + 1]
+            continue
 
-    raise ValueError("Could not extract a balanced JSON object from response.")
+        if char == "{":
+            if depth == 0:
+                start_index = index
+            depth += 1
+            continue
+
+        if char == "}":
+            if depth == 0:
+                continue
+            depth -= 1
+            if depth == 0 and start_index is not None:
+                objects.append(candidate[start_index : index + 1])
+                start_index = None
+
+    return objects
+
+
+def extract_json_object(text: str) -> str:
+    candidate = _clean_json_candidate(text)
+
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError:
+        payload = None
+
+    if isinstance(payload, dict):
+        return candidate
+
+    objects = _extract_balanced_json_objects(candidate)
+    for json_object in objects:
+        try:
+            payload = json.loads(json_object)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return json_object
+
+    if not objects:
+        raise ValueError("No JSON object found in response.")
+    raise ValueError("Could not parse a valid JSON object from response.")
 
 
 def load_palmistry_payload(text: str) -> dict[str, Any]:
