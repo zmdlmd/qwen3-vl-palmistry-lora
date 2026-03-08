@@ -17,6 +17,10 @@ from .schema import build_llava_sft_record, canonicalize_palmistry_json, load_pa
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
 
+def is_remote_image(value: str) -> bool:
+    return value.startswith("http://") or value.startswith("https://") or value.startswith("data:image")
+
+
 @dataclass
 class TeacherGenerationConfig:
     api_base: str
@@ -80,8 +84,11 @@ def load_teacher_records(manifest_path: Path | None, image_dir: Path | None, lim
     return records
 
 
-def resolve_image_path(record: dict[str, Any], *, manifest_path: Path | None, image_dir: Path | None) -> Path:
+def resolve_image_path(record: dict[str, Any], *, manifest_path: Path | None, image_dir: Path | None) -> Path | str:
     image_value = record["image"]
+    if isinstance(image_value, str) and is_remote_image(image_value):
+        return image_value
+
     image_path = Path(image_value)
     if image_path.is_absolute():
         return image_path
@@ -118,13 +125,19 @@ def extract_message_text(response_payload: dict[str, Any]) -> str:
     raise ValueError("Teacher API response did not contain text content.")
 
 
+def build_image_url_payload(image_path: Path | str) -> str:
+    if isinstance(image_path, str):
+        return image_path
+    return encode_image_as_data_url(image_path)
+
+
 def call_openai_compatible_api(
     *,
     api_base: str,
     api_key: str,
     model: str,
     prompt: str,
-    image_path: Path,
+    image_path: Path | str,
     temperature: float,
     max_tokens: int,
     request_timeout: int,
@@ -143,7 +156,7 @@ def call_openai_compatible_api(
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": encode_image_as_data_url(image_path)}},
+                    {"type": "image_url", "image_url": {"url": build_image_url_payload(image_path)}},
                 ],
             }
         ],
