@@ -82,10 +82,10 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
     def generate_report(image, style):
         if image is None:
             message = "请先上传清晰的手掌照片。"
-            return message, message, [], []
+            return message, "", "", "", [], []
 
-        report = pipeline.analyze(image, style=style)
-        return report, report, [], []
+        result = pipeline.analyze_detailed(image, style=style)
+        return result.report, result.caution_message, result.structured_json, result.report, [], []
 
     def ask_followup(user_question, history, report):
         history = history or []
@@ -101,7 +101,7 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         return updated_history, updated_history, ""
 
     def clear_all():
-        return None, "balanced", "", "", [], [], ""
+        return None, "balanced", "", "", "", "", [], [], ""
 
     with gr.Blocks(css=CSS, title="Palmistry LoRA Demo") as demo:
         report_state = gr.State("")
@@ -148,9 +148,19 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
 
                 with gr.Column(scale=1, min_width=360):
                     with gr.Column(elem_id="report-card"):
+                        caution_box = gr.Textbox(
+                            label="保守模式提示",
+                            lines=4,
+                            show_copy_button=True,
+                        )
                         report_box = gr.Textbox(
                             label="手相分析报告",
-                            lines=24,
+                            lines=18,
+                            show_copy_button=True,
+                        )
+                        structured_box = gr.Textbox(
+                            label="结构化掌纹分析 JSON",
+                            lines=14,
                             show_copy_button=True,
                         )
 
@@ -167,7 +177,7 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         generate_btn.click(
             generate_report,
             inputs=[image_input, style_input],
-            outputs=[report_box, report_state, chatbot, history_state],
+            outputs=[report_box, caution_box, structured_box, report_state, chatbot, history_state],
         )
         send_btn.click(
             ask_followup,
@@ -181,7 +191,7 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         )
         clear_btn.click(
             clear_all,
-            outputs=[image_input, style_input, report_box, report_state, chatbot, history_state, question_box],
+            outputs=[image_input, style_input, report_box, caution_box, structured_box, report_state, chatbot, history_state, question_box],
         )
 
     return demo

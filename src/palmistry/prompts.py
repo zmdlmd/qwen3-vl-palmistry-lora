@@ -14,6 +14,31 @@ DEFAULT_STUDENT_STRUCTURED_PROMPT = (
 )
 
 
+def build_visibility_guard_prompt() -> str:
+    return """
+你是一位非常谨慎的手掌图像质检助手。
+
+你的任务不是解读手相，而是先判断这张手掌照片是否足够清晰，值得继续做掌纹分析。
+
+请只输出一个 JSON 对象：
+{
+  "visibility_assessment": {
+    "整体清晰度": "清晰/一般/模糊",
+    "主线可辨识数量": 0,
+    "遮挡或噪点": "无/轻微/明显",
+    "建议": "继续分析/建议重拍",
+    "依据": "..."
+  }
+}
+
+要求：
+1. 只输出合法 JSON。
+2. 如果你不确定，优先保守。
+3. 只要主线可辨识数量少于 3，或者有明显遮挡、严重噪点、强反光、严重模糊，就输出“建议重拍”。
+4. 不要分析命运、性格、健康，不要输出额外说明。
+""".strip()
+
+
 def build_teacher_structured_prompt() -> str:
     return """
 你是一位用于构建蒸馏数据集的手相标注助手。
@@ -94,6 +119,24 @@ def normalize_style(style: str | None) -> str:
     return "balanced"
 
 
+def _style_note(style: str) -> str:
+    style = normalize_style(style)
+    style_notes = {
+        "balanced": """
+语气要求：温和、真诚、既有安抚感，也有一定判断力。
+""".strip(),
+        "soft": """
+语气要求：更细腻、更疗愈，像在和需要被安慰的人说话。
+多使用鼓励性表达，弱化生硬结论，强调自我照顾、情绪安放和慢慢调整。
+""".strip(),
+        "professional": """
+语气要求：更清晰、更克制、更结构化。
+可以强调性格倾向、行为模式、关系处理方式和发展节奏，但仍然要保持尊重和温度。
+""".strip(),
+    }
+    return style_notes[style]
+
+
 def build_report_prompt(style: str = "balanced") -> str:
     style = normalize_style(style)
 
@@ -120,21 +163,47 @@ def build_report_prompt(style: str = "balanced") -> str:
 5. 如果图像不够清晰，要诚实说明可见信息有限。
 """.strip()
 
-    style_notes = {
-        "balanced": """
-语气要求：温和、真诚、既有安抚感，也有一定判断力。
-""".strip(),
-        "soft": """
-语气要求：更细腻、更疗愈，像在和需要被安慰的人说话。
-多使用鼓励性表达，弱化生硬结论，强调自我照顾、情绪安放和慢慢调整。
-""".strip(),
-        "professional": """
-语气要求：更清晰、更克制、更结构化。
-可以强调性格倾向、行为模式、关系处理方式和发展节奏，但仍然要保持尊重和温度。
-""".strip(),
-    }
+    return f"{base_prompt}\n\n{_style_note(style)}"
 
-    return f"{base_prompt}\n\n{style_notes[style]}"
+
+def build_structured_report_prompt(
+    structured_json: str,
+    *,
+    style: str = "balanced",
+    caution_hint: str | None = None,
+) -> str:
+    style = normalize_style(style)
+
+    base_prompt = """
+你是一位专业的中式手相顾问，同时熟悉日式身心疗愈表达。
+
+下面提供的是一份已经从手掌图像中提取出的结构化掌纹分析 JSON。
+你的任务不是重新看图，也不是补充 JSON 里没有出现的细节，而是严格根据这份结构化信息，把它整理成一份自然中文报告。
+
+输出顺序固定如下：
+一、整体印象
+二、生命线
+三、智慧线
+四、感情线
+五、事业线与发展节奏
+六、整体能量与近期运势
+七、现实建议与温和提醒
+八、总结祝福
+
+要求：
+1. 只输出自然中文段落，可以保留标题，但不要输出 JSON，不要输出代码块。
+2. 严禁虚构结构化 JSON 中没有出现的纹路细节。
+3. 如果某条线在 JSON 中写着“难以判断”“模糊”“不可见”或类似表述，必须如实说明可见信息有限，不要自行脑补。
+4. 不要给出医学诊断，只能做趋势性、生活方式层面的提醒。
+5. 不要过度神化命运，强调参考价值和现实行动的重要性。
+6. 结尾提醒“手相仅供参考，请以生活实际为准”。
+""".strip()
+
+    caution_section = ""
+    if caution_hint:
+        caution_section = f"\n\n需要优先保守处理的可见性提醒：\n{caution_hint}"
+
+    return f"{base_prompt}\n\n结构化分析 JSON：\n{structured_json}{caution_section}\n\n{_style_note(style)}"
 
 
 def build_followup_prompt(last_report: str, user_question: str) -> str:
