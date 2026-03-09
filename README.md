@@ -172,6 +172,7 @@ Then edit:
 - `BASE_MODEL_PATH`
 - `PALMISTRY_DATA_ROOT`
 - `DATA_PATH`
+- `EVAL_PATH`
 - `OUTPUT_DIR`
 
 ### 3. Launch LoRA Training
@@ -192,9 +193,26 @@ By default, the teacher pipeline reads from `/root/autodl-tmp/data/Palmistry.v2i
 The teacher API is OpenAI-compatible. For DashScope, Qwen3.5 multimodal models fit this workflow, while the actual API `model` value can be `qwen-plus` or `qwen-vl-plus`.
 Set `TEACHER_NUM_WORKERS` in the env file to enable concurrent API requests when the provider quota allows it.
 
+### 3.55. Split SFT Data Into Train / Val
+
+```bash
+python -m tools.split_sft_dataset \
+  --input-json ./artifacts/palmistry_llava.generated.clean.qwen3_5_plus.json \
+  --output-train-json ./artifacts/palmistry_llava.generated.clean.qwen3_5_plus.train.json \
+  --output-val-json ./artifacts/palmistry_llava.generated.clean.qwen3_5_plus.val.json \
+  --output-summary ./artifacts/palmistry_llava.generated.clean.qwen3_5_plus.split_summary.json \
+  --val-ratio 0.1 \
+  --seed 42
+```
+
+The splitter keeps augmented variants from the same source palm image in the same split, avoiding train/val leakage.
+
+The palmistry LoRA wrapper supports both `DATA_PATH` and `EVAL_PATH`, so the validation split can be evaluated directly during training.
+
 Main entrypoints:
 
 - [tools/generate_teacher_dataset.py](tools/generate_teacher_dataset.py)
+- [tools/split_sft_dataset.py](tools/split_sft_dataset.py)
 - [scripts/palmistry/generate_teacher_data.sh](scripts/palmistry/generate_teacher_data.sh)
 - [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 

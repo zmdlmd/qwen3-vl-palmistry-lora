@@ -33,6 +33,7 @@ Output artifacts:
 
 - canonical SFT dataset json
 - generation log jsonl
+- train/val split jsons for SFT evaluation
 
 ## 2. Why This Matters
 
@@ -48,6 +49,8 @@ That makes it much easier to iterate on:
 - better schema constraints
 - more images
 - better filtering rules
+
+Before running SFT, split the generated dataset with [tools/split_sft_dataset.py](../tools/split_sft_dataset.py). It keeps augmented variants from the same source palm image in the same split, so `eval_path` reflects real generalization instead of leakage from near-duplicate samples.
 
 ## 3. GRPO For Palmistry
 

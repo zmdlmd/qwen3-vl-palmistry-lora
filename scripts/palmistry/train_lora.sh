@@ -16,8 +16,10 @@ fi
 
 BASE_MODEL_PATH="${BASE_MODEL_PATH:-Qwen/Qwen3-VL-8B-Instruct}"
 PALMISTRY_DATA_ROOT="${PALMISTRY_DATA_ROOT:-/root/autodl-tmp/data/Palmistry.v2i.coco}"
-DATA_PATH="${DATA_PATH:-${PROJECT_ROOT}/artifacts/palmistry_llava.generated.json}"
+DATA_PATH="${DATA_PATH:-${PROJECT_ROOT}/artifacts/palmistry_llava.generated.clean.qwen3_5_plus.train.json}"
+EVAL_PATH="${EVAL_PATH:-${PROJECT_ROOT}/artifacts/palmistry_llava.generated.clean.qwen3_5_plus.val.json}"
 IMAGE_FOLDER="${IMAGE_FOLDER:-${PALMISTRY_DATA_ROOT}}"
+EVAL_IMAGE_FOLDER="${EVAL_IMAGE_FOLDER:-${IMAGE_FOLDER}}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/output/palmistry_lora_qwen3_vl_8b}"
 
 NUM_DEVICES="${NUM_DEVICES:-4}"
@@ -46,6 +48,8 @@ WEIGHT_DECAY="${WEIGHT_DECAY:-0.01}"
 WARMUP_RATIO="${WARMUP_RATIO:-0.03}"
 LOGGING_STEPS="${LOGGING_STEPS:-5}"
 DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-4}"
+EVAL_STRATEGY="${EVAL_STRATEGY:-epoch}"
+PER_DEVICE_EVAL_BATCH_SIZE="${PER_DEVICE_EVAL_BATCH_SIZE:-${BATCH_PER_DEVICE}}"
 
 IMAGE_MIN_PIXELS="${IMAGE_MIN_PIXELS:-43904}"
 IMAGE_MAX_PIXELS="${IMAGE_MAX_PIXELS:-43904}"
@@ -58,6 +62,16 @@ fi
 
 if [[ ! -d "${IMAGE_FOLDER}" ]]; then
   echo "IMAGE_FOLDER does not exist: ${IMAGE_FOLDER}" >&2
+  exit 1
+fi
+
+if [[ -n "${EVAL_PATH}" && ! -f "${EVAL_PATH}" ]]; then
+  echo "EVAL_PATH does not exist: ${EVAL_PATH}" >&2
+  exit 1
+fi
+
+if [[ -n "${EVAL_PATH}" && ! -d "${EVAL_IMAGE_FOLDER}" ]]; then
+  echo "EVAL_IMAGE_FOLDER does not exist: ${EVAL_IMAGE_FOLDER}" >&2
   exit 1
 fi
 
@@ -76,7 +90,8 @@ GRAD_ACCUM_STEPS=$((GLOBAL_BATCH_SIZE / (BATCH_PER_DEVICE * NUM_DEVICES)))
 cd "${PROJECT_ROOT}"
 export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src:${PYTHONPATH:-}"
 
-deepspeed --num_gpus="${NUM_DEVICES}" "${PROJECT_ROOT}/src/train/train_sft.py" \
+CMD=(
+  deepspeed --num_gpus="${NUM_DEVICES}" "${PROJECT_ROOT}/src/train/train_sft.py"
   --use_liger "${USE_LIGER}" \
   --lora_enable True \
   --vision_lora "${VISION_LORA}" \
@@ -117,3 +132,15 @@ deepspeed --num_gpus="${NUM_DEVICES}" "${PROJECT_ROOT}/src/train/train_sft.py" \
   --save_strategy epoch \
   --save_total_limit 3 \
   --dataloader_num_workers "${DATALOADER_NUM_WORKERS}"
+)
+
+if [[ -n "${EVAL_PATH}" ]]; then
+  CMD+=(
+    --eval_path "${EVAL_PATH}"
+    --eval_image_folder "${EVAL_IMAGE_FOLDER}"
+    --eval_strategy "${EVAL_STRATEGY}"
+    --per_device_eval_batch_size "${PER_DEVICE_EVAL_BATCH_SIZE}"
+  )
+fi
+
+"${CMD[@]}"
