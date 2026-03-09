@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 import gradio as gr
 
@@ -63,6 +64,66 @@ button.primary {
   border-radius: 18px;
   padding: 10px 12px 6px 12px;
 }
+
+#status-shell {
+  border-radius: 18px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  border: 1px solid #e2e8f0;
+}
+
+.status-ready {
+  background: linear-gradient(135deg, #ecfccb, #f0fdf4);
+  border-color: #84cc16 !important;
+}
+
+.status-retake {
+  background: linear-gradient(135deg, #fff7ed, #fffbeb);
+  border-color: #f97316 !important;
+}
+
+.status-wait {
+  background: linear-gradient(135deg, #eff6ff, #f8fafc);
+  border-color: #cbd5e1 !important;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.badge-ready {
+  background: #65a30d;
+  color: #ffffff;
+}
+
+.badge-retake {
+  background: #ea580c;
+  color: #ffffff;
+}
+
+.badge-wait {
+  background: #475569;
+  color: #ffffff;
+}
+
+.status-title {
+  font-size: 18px;
+  font-weight: 800;
+  margin: 10px 0 6px 0;
+  color: #0f172a;
+}
+
+.status-copy {
+  color: #334155;
+  line-height: 1.6;
+  font-size: 14px;
+}
 """
 
 
@@ -79,13 +140,67 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
+    def format_status_html(low_confidence, caution_message, visibility_assessment):
+        if visibility_assessment is None:
+            return """
+            <div id="status-shell" class="status-wait">
+              <div class="status-badge badge-wait">等待分析</div>
+              <div class="status-title">上传手掌照片后开始质检</div>
+              <div class="status-copy">系统会先判断掌纹可见性，再决定继续分析还是建议重拍。</div>
+            </div>
+            """.strip()
+
+        if low_confidence:
+            badge = "建议重拍"
+            status_class = "status-retake"
+            badge_class = "badge-retake"
+            title = "当前照片不适合继续做完整手相解读"
+        else:
+            badge = "可继续分析"
+            status_class = "status-ready"
+            badge_class = "badge-ready"
+            title = "当前照片已通过保守质检"
+
+        extra = caution_message or "图像质量和主线可见性已达到继续分析的最低要求。"
+        return f"""
+        <div id="status-shell" class="{status_class}">
+          <div class="status-badge {badge_class}">{badge}</div>
+          <div class="status-title">{title}</div>
+          <div class="status-copy">{extra}</div>
+        </div>
+        """.strip()
+
+    def format_visibility_json(visibility_assessment):
+        if visibility_assessment is None:
+            return ""
+        return json.dumps({"visibility_assessment": visibility_assessment}, ensure_ascii=False, indent=2)
+
     def generate_report(image, style):
         if image is None:
             message = "请先上传清晰的手掌照片。"
-            return message, "", "", "", [], []
+            return (
+                format_status_html(False, "", None),
+                message,
+                "",
+                "",
+                "",
+                "",
+                [],
+                [],
+            )
 
         result = pipeline.analyze_detailed(image, style=style)
-        return result.report, result.caution_message, result.structured_json, result.report, [], []
+        report_state = "" if result.low_confidence else result.report
+        return (
+            format_status_html(result.low_confidence, result.caution_message, result.visibility_assessment),
+            result.report,
+            result.caution_message,
+            result.structured_json,
+            format_visibility_json(result.visibility_assessment),
+            report_state,
+            [],
+            [],
+        )
 
     def ask_followup(user_question, history, report):
         history = history or []
@@ -101,7 +216,7 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         return updated_history, updated_history, ""
 
     def clear_all():
-        return None, "balanced", "", "", "", "", [], [], ""
+        return None, "balanced", format_status_html(False, "", None), "", "", "", "", "", [], [], ""
 
     with gr.Blocks(css=CSS, title="Palmistry LoRA Demo") as demo:
         report_state = gr.State("")
@@ -112,9 +227,9 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
                 """
                 <div id="title-bar">
                   <div id="title-icon">🖐</div>
-                  <div>
-                    <div id="title-text">Qwen3-VL Palmistry LoRA Demo</div>
-                    <div id="subtitle">上传手掌图像，生成中文手相报告，并基于报告继续追问。</div>
+                    <div>
+                      <div id="title-text">Qwen3-VL Palmistry LoRA Demo</div>
+                    <div id="subtitle">先做掌纹可见性质检，再决定继续分析还是建议重拍；通过后再生成中文报告并支持追问。</div>
                   </div>
                 </div>
                 """
@@ -147,22 +262,32 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
                     )
 
                 with gr.Column(scale=1, min_width=360):
+                    status_box = gr.HTML(value=format_status_html(False, "", None))
                     with gr.Column(elem_id="report-card"):
-                        caution_box = gr.Textbox(
-                            label="保守模式提示",
-                            lines=4,
-                            show_copy_button=True,
-                        )
-                        report_box = gr.Textbox(
-                            label="手相分析报告",
-                            lines=18,
-                            show_copy_button=True,
-                        )
-                        structured_box = gr.Textbox(
-                            label="结构化掌纹分析 JSON",
-                            lines=14,
-                            show_copy_button=True,
-                        )
+                        with gr.Tabs():
+                            with gr.Tab("分析报告"):
+                                report_box = gr.Textbox(
+                                    label="手相分析报告",
+                                    lines=18,
+                                    show_copy_button=True,
+                                )
+                                caution_box = gr.Textbox(
+                                    label="保守模式提示",
+                                    lines=4,
+                                    show_copy_button=True,
+                                )
+                            with gr.Tab("结构化 JSON"):
+                                structured_box = gr.Textbox(
+                                    label="结构化掌纹分析 JSON",
+                                    lines=18,
+                                    show_copy_button=True,
+                                )
+                            with gr.Tab("图像质检"):
+                                visibility_box = gr.Textbox(
+                                    label="可见性质检 JSON",
+                                    lines=12,
+                                    show_copy_button=True,
+                                )
 
             gr.Markdown("### 报告追问")
             chatbot = gr.Chatbot(label="继续追问", height=320)
@@ -177,7 +302,7 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         generate_btn.click(
             generate_report,
             inputs=[image_input, style_input],
-            outputs=[report_box, caution_box, structured_box, report_state, chatbot, history_state],
+            outputs=[status_box, report_box, caution_box, structured_box, visibility_box, report_state, chatbot, history_state],
         )
         send_btn.click(
             ask_followup,
@@ -191,7 +316,7 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         )
         clear_btn.click(
             clear_all,
-            outputs=[image_input, style_input, report_box, caution_box, structured_box, report_state, chatbot, history_state, question_box],
+            outputs=[image_input, style_input, status_box, report_box, caution_box, structured_box, visibility_box, report_state, chatbot, history_state, question_box],
         )
 
     return demo
