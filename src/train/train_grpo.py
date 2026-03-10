@@ -175,7 +175,6 @@ def train():
     bnb_model_from_pretrained_args = {}
     if training_args.bits in [4,8]:
         bnb_model_from_pretrained_args.update(dict(
-            device_map={"":training_args.device},
             quantization_config = BitsAndBytesConfig(
                 load_in_4bit=training_args.bits==4,
                 load_in_8bit=training_args.bits==8,
@@ -187,6 +186,8 @@ def train():
                 bnb_4bit_quant_type=training_args.quant_type,
             )
         ))
+        if not training_args.deepspeed:
+            bnb_model_from_pretrained_args["device_map"] = {"": training_args.device}
 
     if "Qwen2.5" in model_args.model_id:
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(

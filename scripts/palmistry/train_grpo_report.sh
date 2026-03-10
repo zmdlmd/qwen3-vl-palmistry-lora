@@ -10,8 +10,10 @@ if [[ $# -gt 1 ]]; then
 fi
 
 if [[ $# -eq 1 ]]; then
+  set -a
   # shellcheck disable=SC1090
   source "$1"
+  set +a
 fi
 
 export DATA_PATH="${DATA_PATH:-${PROJECT_ROOT}/artifacts/palmistry_llava.report_grpo.json}"
