@@ -46,6 +46,12 @@ The current pipeline is:
 - Config-driven training wrapper instead of machine-specific hardcoded shell scripts
 - Documentation that explains what is actually being learned by the LoRA
 
+## Experiment Notes
+
+- Iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
+- Architecture notes: [docs/architecture.md](docs/architecture.md)
+- Distillation + GRPO notes: [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
+
 ## Project Snapshot
 
 ```text
@@ -85,6 +91,7 @@ This repository now supports two complementary stages beyond basic SFT:
 - Report GRPO dataset builder: [tools/build_report_grpo_dataset.py](tools/build_report_grpo_dataset.py)
 - Gradio demo: [apps/gradio_palmistry.py](apps/gradio_palmistry.py)
 - Adapter export tool: [tools/export_peft_adapter.py](tools/export_peft_adapter.py)
+- Experiment iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
 - Distillation + GRPO notes: [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 - Dataset notes: [data/README.md](data/README.md)
@@ -107,6 +114,7 @@ This repository now supports two complementary stages beyond basic SFT:
 │   ├── README.md
 │   └── examples/
 ├── docs/
+│   ├── experiment_iterations.md
 │   ├── architecture.md
 │   └── assets/
 ├── scripts/
