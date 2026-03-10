@@ -27,6 +27,15 @@
 
 该仓库保留了上游 `Qwen-VL-Series-Finetune` 的通用训练内核，同时将 palmistry 任务相关的数据、训练、推理与展示层整理为独立模块，适合公开发布与持续迭代。
 
+## 当前最佳结果
+
+- 数据清洗后，从 `19587` 条原始样本中筛出 `3942` 条 `clean` 样本用于 teacher 生成
+- 使用 `qwen3.5-plus` 自动生成 `3899` 条可用结构化 palmistry teacher 数据
+- 按原图簇切分得到 `3509` 条训练样本和 `390` 条验证样本，避免增强图泄漏
+- 基于 `Qwen3-VL-8B-Instruct` 完成 `3 epochs` LoRA SFT，最终 `train_loss = 0.5444`
+- 经分层门控校准后，`val` 集 `structured_available_rate = 0.96`，`full_report_rate = 0.44`
+- `hard_cases` 集 `low_confidence_rate = 0.80`，`full_report_rate = 0.0`，说明困难样本已能以谨慎分析或重拍提示为主
+
 ## English Overview
 
 This repository adapts the upstream `Qwen-VL-Series-Finetune` framework into a palmistry-focused multimodal fine-tuning project.
