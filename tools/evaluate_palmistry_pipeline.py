@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import time
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.palmistry import PalmistryPipeline
 from src.palmistry.reward_funcs_report import (
@@ -46,6 +47,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--structured-max-new-tokens", type=int, default=1400)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument(
+        "--hard-mode",
+        default="gate_only",
+        choices=["gate_only", "full"],
+        help="gate_only only runs visibility gating on hard cases; full runs the full pipeline.",
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=10,
+        help="Print progress every N samples.",
+    )
+    parser.add_argument(
+        "--summary-every",
+        type=int,
+        default=25,
+        help="Rewrite the summary JSON every N samples.",
+    )
     return parser.parse_args()
 
 
@@ -71,11 +90,17 @@ def maybe_limit(records: list[dict[str, Any]], limit: int | None) -> list[dict[s
     return records[:limit]
 
 
-def dump_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+def append_jsonl_row(path: Path | None, row: dict[str, Any]) -> None:
+    if path is None:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def safe_mean(values: list[float]) -> float:
@@ -123,6 +148,129 @@ def report_metrics(predicted_report: str, reference_json: str) -> dict[str, floa
     }
 
 
+def summarize_val(
+    counts: Counter[str],
+    structured_summary: dict[str, list[float]],
+    report_summary: dict[str, list[float]],
+) -> dict[str, Any]:
+    return {
+        "num_samples": counts["samples"],
+        "low_confidence_rate": counts["low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
+        "expected_low_confidence_rate": counts["expected_low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
+        "gate_match_rate": counts["gate_match"] / counts["samples"] if counts["samples"] else 0.0,
+        "visibility_retake_rate": counts["visibility_retake"] / counts["samples"] if counts["samples"] else 0.0,
+        "structured_available_rate": counts["structured_available"] / counts["samples"] if counts["samples"] else 0.0,
+        "full_report_rate": counts["full_report_generated"] / counts["samples"] if counts["samples"] else 0.0,
+        "structured_metrics": {key: safe_mean(values) for key, values in structured_summary.items()},
+        "report_metrics": {key: safe_mean(values) for key, values in report_summary.items()},
+    }
+
+
+def summarize_hard(counts: Counter[str], by_reason: dict[str, Counter[str]]) -> dict[str, Any]:
+    return {
+        "num_samples": counts["samples"],
+        "low_confidence_rate": counts["low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
+        "full_report_rate": counts["full_report_generated"] / counts["samples"] if counts["samples"] else 0.0,
+        "visibility_retake_rate": counts["visibility_retake"] / counts["samples"] if counts["samples"] else 0.0,
+        "by_reject_reason": {
+            reason: {
+                "samples": counter["samples"],
+                "low_confidence_rate": counter["low_confidence"] / counter["samples"] if counter["samples"] else 0.0,
+                "full_report_rate": counter["full_report_generated"] / counter["samples"] if counter["samples"] else 0.0,
+                "visibility_retake_rate": counter["visibility_retake"] / counter["samples"] if counter["samples"] else 0.0,
+            }
+            for reason, counter in sorted(by_reason.items())
+        },
+    }
+
+
+def build_root_summary(
+    base_summary: dict[str, Any],
+    *,
+    val_summary: dict[str, Any] | None = None,
+    hard_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    summary = dict(base_summary)
+    if val_summary is not None:
+        summary["val"] = val_summary
+    if hard_summary is not None:
+        summary["hard_cases"] = hard_summary
+    return summary
+
+
+def format_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def should_emit(index: int, total: int, every: int) -> bool:
+    return index == 1 or index == total or (every > 0 and index % every == 0)
+
+
+def print_progress(split_name: str, index: int, total: int, start_time: float) -> None:
+    elapsed = max(time.time() - start_time, 1e-6)
+    rate = index / elapsed
+    eta = (total - index) / rate if rate > 0 else 0.0
+    print(
+        f"[{split_name}] {index}/{total} ({index / total:.1%}) "
+        f"elapsed={format_duration(elapsed)} eta={format_duration(eta)} "
+        f"speed={rate:.2f} samples/s",
+        flush=True,
+    )
+
+
+def evaluate_visibility_only(
+    pipeline: PalmistryPipeline,
+    image_path: Path,
+    *,
+    temperature: float,
+    top_p: float,
+) -> dict[str, Any]:
+    try:
+        visibility_assessment = pipeline.assess_visibility(
+            image_path,
+            temperature=min(temperature, 0.2),
+            top_p=top_p,
+        )
+        visibility_retake = bool(
+            visibility_assessment and pipeline._visibility_requires_retake(visibility_assessment)
+        )
+        caution_message = ""
+        if visibility_retake:
+            reason = str(visibility_assessment.get("依据", "")).strip()
+            caution_message = (
+                "这张照片的掌纹可见性不足，继续生成完整手相报告容易出现过度解读。"
+                f"{reason if reason else '建议重新拍摄：自然光、掌心完整入镜、避免遮挡和强反光。'}"
+                " 手相仅供参考，请以生活实际为准。"
+            )
+        return {
+            "pred_low_confidence": visibility_retake,
+            "pred_uncertain_main_lines": len(REQUIRED_LINE_NAMES) if visibility_retake else 0,
+            "pred_uncertain_lines": list(REQUIRED_LINE_NAMES) if visibility_retake else [],
+            "visibility_assessment": visibility_assessment,
+            "caution_message": caution_message,
+            "error": None,
+            "visibility_retake": visibility_retake,
+            "full_report_generated": False,
+        }
+    except Exception as exc:
+        message = pipeline._build_retake_message([], error=str(exc))
+        return {
+            "pred_low_confidence": True,
+            "pred_uncertain_main_lines": len(REQUIRED_LINE_NAMES),
+            "pred_uncertain_lines": list(REQUIRED_LINE_NAMES),
+            "visibility_assessment": None,
+            "caution_message": message,
+            "error": str(exc),
+            "visibility_retake": True,
+            "full_report_generated": False,
+        }
+
+
 def evaluate_val_split(
     pipeline: PalmistryPipeline,
     records: list[dict[str, Any]],
@@ -133,13 +281,18 @@ def evaluate_val_split(
     structured_max_new_tokens: int,
     temperature: float,
     top_p: float,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    per_sample: list[dict[str, Any]] = []
+    progress_every: int,
+    summary_every: int,
+    sample_writer: Callable[[dict[str, Any]], None] | None = None,
+    summary_writer: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     structured_summary: defaultdict[str, list[float]] = defaultdict(list)
     report_summary: defaultdict[str, list[float]] = defaultdict(list)
     counts = Counter()
+    total = len(records)
+    start_time = time.time()
 
-    for record in records:
+    for index, record in enumerate(records, start=1):
         reference_json = extract_teacher_json(record)
         reference_payload = load_palmistry_payload(reference_json)
         expected_uncertain_main_lines = count_uncertain_main_lines(reference_payload)
@@ -194,20 +347,16 @@ def evaluate_val_split(
                 report_summary[key].append(value)
             counts["report_available"] += 1
 
-        per_sample.append(sample_row)
+        if sample_writer is not None:
+            sample_writer(sample_row)
 
-    summary = {
-        "num_samples": counts["samples"],
-        "low_confidence_rate": counts["low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
-        "expected_low_confidence_rate": counts["expected_low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
-        "gate_match_rate": counts["gate_match"] / counts["samples"] if counts["samples"] else 0.0,
-        "visibility_retake_rate": counts["visibility_retake"] / counts["samples"] if counts["samples"] else 0.0,
-        "structured_available_rate": counts["structured_available"] / counts["samples"] if counts["samples"] else 0.0,
-        "full_report_rate": counts["full_report_generated"] / counts["samples"] if counts["samples"] else 0.0,
-        "structured_metrics": {key: safe_mean(values) for key, values in structured_summary.items()},
-        "report_metrics": {key: safe_mean(values) for key, values in report_summary.items()},
-    }
-    return summary, per_sample
+        if should_emit(index, total, progress_every):
+            print_progress("val", index, total, start_time)
+
+        if summary_writer is not None and should_emit(index, total, summary_every):
+            summary_writer(summarize_val(counts, structured_summary, report_summary))
+
+    return summarize_val(counts, structured_summary, report_summary)
 
 
 def evaluate_hard_cases(
@@ -220,69 +369,84 @@ def evaluate_hard_cases(
     structured_max_new_tokens: int,
     temperature: float,
     top_p: float,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    per_sample: list[dict[str, Any]] = []
+    hard_mode: str,
+    progress_every: int,
+    summary_every: int,
+    sample_writer: Callable[[dict[str, Any]], None] | None = None,
+    summary_writer: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     counts = Counter()
     by_reason: dict[str, Counter[str]] = defaultdict(Counter)
+    total = len(rows)
+    start_time = time.time()
 
-    for row in rows:
-        result = pipeline.analyze_detailed(
-            image_root / row["image"],
-            style=style,
-            max_new_tokens=report_max_new_tokens,
-            structured_max_new_tokens=structured_max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-        )
+    for index, row in enumerate(rows, start=1):
+        image_path = image_root / row["image"]
+        if hard_mode == "gate_only":
+            result_row = evaluate_visibility_only(
+                pipeline,
+                image_path,
+                temperature=temperature,
+                top_p=top_p,
+            )
+        else:
+            result = pipeline.analyze_detailed(
+                image_path,
+                style=style,
+                max_new_tokens=report_max_new_tokens,
+                structured_max_new_tokens=structured_max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+            )
+            visibility_retake = bool(
+                result.visibility_assessment
+                and pipeline._visibility_requires_retake(result.visibility_assessment)
+            )
+            full_report_generated = bool(result.report) and result.report != result.caution_message
+            result_row = {
+                "pred_low_confidence": result.low_confidence,
+                "pred_uncertain_main_lines": result.uncertain_main_lines,
+                "pred_uncertain_lines": result.uncertain_lines,
+                "visibility_assessment": result.visibility_assessment,
+                "caution_message": result.caution_message,
+                "error": result.error,
+                "visibility_retake": visibility_retake,
+                "full_report_generated": full_report_generated,
+            }
+
         reject_reasons = [str(reason) for reason in row.get("reject_reasons", [])]
         sample_row = {
             "split": "hard_cases",
+            "evaluation_mode": hard_mode,
             "id": row.get("id"),
             "image": row.get("image"),
             "reject_reasons": reject_reasons,
             "quality_bucket": row.get("quality_bucket"),
             "quality_score": row.get("quality_score"),
-            "pred_low_confidence": result.low_confidence,
-            "pred_uncertain_main_lines": result.uncertain_main_lines,
-            "pred_uncertain_lines": result.uncertain_lines,
-            "visibility_assessment": result.visibility_assessment,
-            "caution_message": result.caution_message,
-            "error": result.error,
+            **result_row,
         }
-        per_sample.append(sample_row)
-        visibility_retake = bool(
-            result.visibility_assessment
-            and pipeline._visibility_requires_retake(result.visibility_assessment)
-        )
-        full_report_generated = bool(result.report) and result.report != result.caution_message
 
         counts["samples"] += 1
-        counts["low_confidence"] += int(result.low_confidence)
-        counts["full_report_generated"] += int(full_report_generated)
-        counts["visibility_retake"] += int(visibility_retake)
+        counts["low_confidence"] += int(result_row["pred_low_confidence"])
+        counts["full_report_generated"] += int(result_row["full_report_generated"])
+        counts["visibility_retake"] += int(result_row["visibility_retake"])
 
         for reason in reject_reasons or ["__none__"]:
             by_reason[reason]["samples"] += 1
-            by_reason[reason]["low_confidence"] += int(result.low_confidence)
-            by_reason[reason]["full_report_generated"] += int(full_report_generated)
-            by_reason[reason]["visibility_retake"] += int(visibility_retake)
+            by_reason[reason]["low_confidence"] += int(result_row["pred_low_confidence"])
+            by_reason[reason]["full_report_generated"] += int(result_row["full_report_generated"])
+            by_reason[reason]["visibility_retake"] += int(result_row["visibility_retake"])
 
-    summary = {
-        "num_samples": counts["samples"],
-        "low_confidence_rate": counts["low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
-        "full_report_rate": counts["full_report_generated"] / counts["samples"] if counts["samples"] else 0.0,
-        "visibility_retake_rate": counts["visibility_retake"] / counts["samples"] if counts["samples"] else 0.0,
-        "by_reject_reason": {
-            reason: {
-                "samples": counter["samples"],
-                "low_confidence_rate": counter["low_confidence"] / counter["samples"] if counter["samples"] else 0.0,
-                "full_report_rate": counter["full_report_generated"] / counter["samples"] if counter["samples"] else 0.0,
-                "visibility_retake_rate": counter["visibility_retake"] / counter["samples"] if counter["samples"] else 0.0,
-            }
-            for reason, counter in sorted(by_reason.items())
-        },
-    }
-    return summary, per_sample
+        if sample_writer is not None:
+            sample_writer(sample_row)
+
+        if should_emit(index, total, progress_every):
+            print_progress(f"hard:{hard_mode}", index, total, start_time)
+
+        if summary_writer is not None and should_emit(index, total, summary_every):
+            summary_writer(summarize_hard(counts, by_reason))
+
+    return summarize_hard(counts, by_reason)
 
 
 def main() -> None:
@@ -290,6 +454,13 @@ def main() -> None:
     image_root = Path(args.image_root).resolve()
     if not image_root.exists():
         raise SystemExit(f"Image root does not exist: {image_root}")
+
+    output_path = Path(args.output_json)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_jsonl_path = Path(args.output_jsonl) if args.output_jsonl else None
+    if output_jsonl_path is not None:
+        output_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        output_jsonl_path.write_text("", encoding="utf-8")
 
     pipeline = PalmistryPipeline(
         base_model_path=args.base_model,
@@ -299,17 +470,31 @@ def main() -> None:
         torch_dtype=args.torch_dtype,
     )
 
-    summary: dict[str, Any] = {
+    base_summary: dict[str, Any] = {
         "base_model": args.base_model,
         "lora_path": args.lora_path,
         "image_root": str(image_root),
         "style": args.style,
+        "hard_mode": args.hard_mode,
     }
-    per_sample_rows: list[dict[str, Any]] = []
+
+    val_summary: dict[str, Any] | None = None
+    hard_summary: dict[str, Any] | None = None
+
+    sample_writer = None
+    if output_jsonl_path is not None:
+        sample_writer = lambda row: append_jsonl_row(output_jsonl_path, row)
 
     if args.val_json:
         val_records = maybe_limit(load_json_records(Path(args.val_json)), args.val_limit)
-        val_summary, val_rows = evaluate_val_split(
+
+        def val_summary_writer(current_summary: dict[str, Any]) -> None:
+            write_json(
+                output_path,
+                build_root_summary(base_summary, val_summary=current_summary, hard_summary=hard_summary),
+            )
+
+        val_summary = evaluate_val_split(
             pipeline,
             val_records,
             image_root=image_root,
@@ -318,13 +503,22 @@ def main() -> None:
             structured_max_new_tokens=args.structured_max_new_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
+            progress_every=args.progress_every,
+            summary_every=args.summary_every,
+            sample_writer=sample_writer,
+            summary_writer=val_summary_writer,
         )
-        summary["val"] = val_summary
-        per_sample_rows.extend(val_rows)
 
     if args.hard_manifest:
         hard_rows = maybe_limit(load_jsonl_records(Path(args.hard_manifest)), args.hard_limit)
-        hard_summary, hard_sample_rows = evaluate_hard_cases(
+
+        def hard_summary_writer(current_summary: dict[str, Any]) -> None:
+            write_json(
+                output_path,
+                build_root_summary(base_summary, val_summary=val_summary, hard_summary=current_summary),
+            )
+
+        hard_summary = evaluate_hard_cases(
             pipeline,
             hard_rows,
             image_root=image_root,
@@ -333,17 +527,16 @@ def main() -> None:
             structured_max_new_tokens=args.structured_max_new_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
+            hard_mode=args.hard_mode,
+            progress_every=args.progress_every,
+            summary_every=args.summary_every,
+            sample_writer=sample_writer,
+            summary_writer=hard_summary_writer,
         )
-        summary["hard_cases"] = hard_summary
-        per_sample_rows.extend(hard_sample_rows)
 
-    output_path = Path(args.output_json)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary = build_root_summary(base_summary, val_summary=val_summary, hard_summary=hard_summary)
+    write_json(output_path, summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-
-    if args.output_jsonl:
-        dump_jsonl(Path(args.output_jsonl), per_sample_rows)
 
 
 if __name__ == "__main__":

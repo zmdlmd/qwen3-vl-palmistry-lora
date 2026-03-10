@@ -38,6 +38,9 @@ REPORT_MAX_NEW_TOKENS="${REPORT_MAX_NEW_TOKENS:-900}"
 STRUCTURED_MAX_NEW_TOKENS="${STRUCTURED_MAX_NEW_TOKENS:-1400}"
 TEMPERATURE="${TEMPERATURE:-0.2}"
 TOP_P="${TOP_P:-0.9}"
+HARD_MODE="${HARD_MODE:-gate_only}"
+PROGRESS_EVERY="${PROGRESS_EVERY:-10}"
+SUMMARY_EVERY="${SUMMARY_EVERY:-25}"
 
 if [[ -z "${VAL_JSON}" && -z "${HARD_MANIFEST}" ]]; then
   echo "At least one of VAL_JSON or HARD_MANIFEST must be set." >&2
@@ -81,6 +84,9 @@ CMD=(
   --structured-max-new-tokens "${STRUCTURED_MAX_NEW_TOKENS}"
   --temperature "${TEMPERATURE}"
   --top-p "${TOP_P}"
+  --hard-mode "${HARD_MODE}"
+  --progress-every "${PROGRESS_EVERY}"
+  --summary-every "${SUMMARY_EVERY}"
 )
 
 if [[ -n "${VAL_JSON}" ]]; then

@@ -206,20 +206,49 @@ class PalmistryPipeline:
         return assessment
 
     @staticmethod
-    def _visibility_requires_retake(assessment: dict[str, Any]) -> bool:
-        clarity = str(assessment.get("整体清晰度", "")).strip()
-        occlusion = str(assessment.get("遮挡或噪点", "")).strip()
+    def _visible_line_count(assessment: dict[str, Any]) -> int:
         visible_lines_raw = str(assessment.get("主线可辨识数量", "")).strip()
         try:
-            visible_lines = int(visible_lines_raw)
+            return int(visible_lines_raw)
         except ValueError:
-            visible_lines = 0
+            return 0
 
+    @classmethod
+    def _visibility_requires_retake(cls, assessment: dict[str, Any]) -> bool:
+        suggestion = str(assessment.get("建议", "")).strip()
+        clarity = str(assessment.get("整体清晰度", "")).strip()
+        occlusion = str(assessment.get("遮挡或噪点", "")).strip()
+        visible_lines = cls._visible_line_count(assessment)
+
+        if "重拍" in suggestion:
+            return True
         if clarity == "模糊":
             return True
         if occlusion == "明显":
             return True
-        if visible_lines < 2:
+        if visible_lines < 3:
+            return True
+        if clarity == "一般" and occlusion == "轻微" and visible_lines <= 3:
+            return True
+        return False
+
+    @classmethod
+    def _should_force_low_confidence(
+        cls,
+        assessment: dict[str, Any] | None,
+        uncertain_main_line_count: int,
+        uncertain_line_count: int,
+    ) -> bool:
+        if uncertain_main_line_count >= 1:
+            return True
+
+        if not assessment:
+            return False
+
+        clarity = str(assessment.get("整体清晰度", "")).strip()
+        occlusion = str(assessment.get("遮挡或噪点", "")).strip()
+        visible_lines = cls._visible_line_count(assessment)
+        if uncertain_line_count >= 2 and (clarity != "清晰" or occlusion != "无" or visible_lines <= 3):
             return True
         return False
 
@@ -263,7 +292,7 @@ class PalmistryPipeline:
         structured_payload = load_palmistry_payload(canonical_json)
         uncertain_main_lines, uncertain_optional_lines = self._collect_uncertain_lines(structured_payload)
         uncertain_lines = uncertain_main_lines + uncertain_optional_lines
-        low_confidence = len(uncertain_main_lines) > 1
+        low_confidence = len(uncertain_main_lines) >= 1
         caution_message = (
             self._build_retake_message(uncertain_main_lines)
             if low_confidence
@@ -398,6 +427,19 @@ class PalmistryPipeline:
             )
 
         result.visibility_assessment = visibility_assessment
+        forced_low_confidence = self._should_force_low_confidence(
+            visibility_assessment,
+            result.uncertain_main_lines,
+            len(result.uncertain_lines),
+        )
+        if forced_low_confidence and not result.low_confidence:
+            uncertain_main_lines, _ = self._collect_uncertain_lines(result.structured_payload or {})
+            result.low_confidence = True
+            result.uncertain_main_lines = max(1, len(uncertain_main_lines))
+            result.caution_message = self._build_retake_message(
+                uncertain_main_lines or list(REQUIRED_LINE_NAMES[:1]),
+            )
+
         if result.low_confidence:
             result.report = result.caution_message
             return result
