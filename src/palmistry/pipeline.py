@@ -214,21 +214,36 @@ class PalmistryPipeline:
             return 0
 
     @classmethod
+    def _visibility_is_cautious(cls, assessment: dict[str, Any]) -> bool:
+        suggestion = str(assessment.get("建议", "")).strip()
+        clarity = str(assessment.get("整体清晰度", "")).strip()
+        occlusion = str(assessment.get("遮挡或噪点", "")).strip()
+        visible_lines = cls._visible_line_count(assessment)
+
+        if suggestion == "谨慎分析":
+            return True
+        if clarity == "一般":
+            return True
+        if occlusion == "轻微":
+            return True
+        if visible_lines in (2, 3):
+            return True
+        return False
+
+    @classmethod
     def _visibility_requires_retake(cls, assessment: dict[str, Any]) -> bool:
         suggestion = str(assessment.get("建议", "")).strip()
         clarity = str(assessment.get("整体清晰度", "")).strip()
         occlusion = str(assessment.get("遮挡或噪点", "")).strip()
         visible_lines = cls._visible_line_count(assessment)
 
-        if "重拍" in suggestion:
+        if suggestion == "建议重拍":
             return True
         if clarity == "模糊":
             return True
         if occlusion == "明显":
             return True
-        if visible_lines < 3:
-            return True
-        if clarity == "一般" and occlusion == "轻微" and visible_lines <= 3:
+        if visible_lines < 2:
             return True
         return False
 
@@ -239,16 +254,19 @@ class PalmistryPipeline:
         uncertain_main_line_count: int,
         uncertain_line_count: int,
     ) -> bool:
-        if uncertain_main_line_count >= 1:
+        if uncertain_main_line_count >= 2:
             return True
 
         if not assessment:
             return False
 
-        clarity = str(assessment.get("整体清晰度", "")).strip()
-        occlusion = str(assessment.get("遮挡或噪点", "")).strip()
         visible_lines = cls._visible_line_count(assessment)
-        if uncertain_line_count >= 2 and (clarity != "清晰" or occlusion != "无" or visible_lines <= 3):
+        cautious_visibility = cls._visibility_is_cautious(assessment)
+
+        if uncertain_main_line_count == 1 and (cautious_visibility or visible_lines < 4):
+            return True
+
+        if uncertain_line_count >= 3 and cautious_visibility:
             return True
         return False
 
@@ -292,7 +310,7 @@ class PalmistryPipeline:
         structured_payload = load_palmistry_payload(canonical_json)
         uncertain_main_lines, uncertain_optional_lines = self._collect_uncertain_lines(structured_payload)
         uncertain_lines = uncertain_main_lines + uncertain_optional_lines
-        low_confidence = len(uncertain_main_lines) >= 1
+        low_confidence = len(uncertain_main_lines) >= 2
         caution_message = (
             self._build_retake_message(uncertain_main_lines)
             if low_confidence

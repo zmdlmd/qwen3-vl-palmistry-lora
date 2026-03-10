@@ -158,6 +158,7 @@ def summarize_val(
         "low_confidence_rate": counts["low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
         "expected_low_confidence_rate": counts["expected_low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
         "gate_match_rate": counts["gate_match"] / counts["samples"] if counts["samples"] else 0.0,
+        "visibility_cautious_rate": counts["visibility_cautious"] / counts["samples"] if counts["samples"] else 0.0,
         "visibility_retake_rate": counts["visibility_retake"] / counts["samples"] if counts["samples"] else 0.0,
         "structured_available_rate": counts["structured_available"] / counts["samples"] if counts["samples"] else 0.0,
         "full_report_rate": counts["full_report_generated"] / counts["samples"] if counts["samples"] else 0.0,
@@ -170,12 +171,14 @@ def summarize_hard(counts: Counter[str], by_reason: dict[str, Counter[str]]) -> 
     return {
         "num_samples": counts["samples"],
         "low_confidence_rate": counts["low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
+        "visibility_cautious_rate": counts["visibility_cautious"] / counts["samples"] if counts["samples"] else 0.0,
         "full_report_rate": counts["full_report_generated"] / counts["samples"] if counts["samples"] else 0.0,
         "visibility_retake_rate": counts["visibility_retake"] / counts["samples"] if counts["samples"] else 0.0,
         "by_reject_reason": {
             reason: {
                 "samples": counter["samples"],
                 "low_confidence_rate": counter["low_confidence"] / counter["samples"] if counter["samples"] else 0.0,
+                "visibility_cautious_rate": counter["visibility_cautious"] / counter["samples"] if counter["samples"] else 0.0,
                 "full_report_rate": counter["full_report_generated"] / counter["samples"] if counter["samples"] else 0.0,
                 "visibility_retake_rate": counter["visibility_retake"] / counter["samples"] if counter["samples"] else 0.0,
             }
@@ -229,12 +232,15 @@ def evaluate_visibility_only(
     *,
     temperature: float,
     top_p: float,
-) -> dict[str, Any]:
+    ) -> dict[str, Any]:
     try:
         visibility_assessment = pipeline.assess_visibility(
             image_path,
             temperature=min(temperature, 0.2),
             top_p=top_p,
+        )
+        visibility_cautious = bool(
+            visibility_assessment and pipeline._visibility_is_cautious(visibility_assessment)
         )
         visibility_retake = bool(
             visibility_assessment and pipeline._visibility_requires_retake(visibility_assessment)
@@ -247,13 +253,20 @@ def evaluate_visibility_only(
                 f"{reason if reason else '建议重新拍摄：自然光、掌心完整入镜、避免遮挡和强反光。'}"
                 " 手相仅供参考，请以生活实际为准。"
             )
+        elif visibility_cautious:
+            caution_message = (
+                "这张照片目前只适合做保守掌纹观察，不适合直接输出强结论的完整报告。"
+                "如需更稳定结果，建议在自然光下重拍一张更清晰的掌心照片。"
+                " 手相仅供参考，请以生活实际为准。"
+            )
         return {
-            "pred_low_confidence": visibility_retake,
-            "pred_uncertain_main_lines": len(REQUIRED_LINE_NAMES) if visibility_retake else 0,
-            "pred_uncertain_lines": list(REQUIRED_LINE_NAMES) if visibility_retake else [],
+            "pred_low_confidence": visibility_retake or visibility_cautious,
+            "pred_uncertain_main_lines": len(REQUIRED_LINE_NAMES) if visibility_retake else int(visibility_cautious),
+            "pred_uncertain_lines": list(REQUIRED_LINE_NAMES) if visibility_retake else ([] if not visibility_cautious else ["主要掌纹"]),
             "visibility_assessment": visibility_assessment,
             "caution_message": caution_message,
             "error": None,
+            "visibility_cautious": visibility_cautious,
             "visibility_retake": visibility_retake,
             "full_report_generated": False,
         }
@@ -266,6 +279,7 @@ def evaluate_visibility_only(
             "visibility_assessment": None,
             "caution_message": message,
             "error": str(exc),
+            "visibility_cautious": False,
             "visibility_retake": True,
             "full_report_generated": False,
         }
@@ -324,12 +338,17 @@ def evaluate_val_split(
             result.visibility_assessment
             and pipeline._visibility_requires_retake(result.visibility_assessment)
         )
+        visibility_cautious = bool(
+            result.visibility_assessment
+            and pipeline._visibility_is_cautious(result.visibility_assessment)
+        )
         full_report_generated = bool(result.report) and result.report != result.caution_message
 
         counts["samples"] += 1
         counts["low_confidence"] += int(result.low_confidence)
         counts["expected_low_confidence"] += int(expected_low_confidence)
         counts["gate_match"] += int(result.low_confidence == expected_low_confidence)
+        counts["visibility_cautious"] += int(visibility_cautious)
         counts["visibility_retake"] += int(visibility_retake)
         counts["full_report_generated"] += int(full_report_generated)
 
@@ -402,6 +421,10 @@ def evaluate_hard_cases(
                 result.visibility_assessment
                 and pipeline._visibility_requires_retake(result.visibility_assessment)
             )
+            visibility_cautious = bool(
+                result.visibility_assessment
+                and pipeline._visibility_is_cautious(result.visibility_assessment)
+            )
             full_report_generated = bool(result.report) and result.report != result.caution_message
             result_row = {
                 "pred_low_confidence": result.low_confidence,
@@ -410,6 +433,7 @@ def evaluate_hard_cases(
                 "visibility_assessment": result.visibility_assessment,
                 "caution_message": result.caution_message,
                 "error": result.error,
+                "visibility_cautious": visibility_cautious,
                 "visibility_retake": visibility_retake,
                 "full_report_generated": full_report_generated,
             }
@@ -428,12 +452,14 @@ def evaluate_hard_cases(
 
         counts["samples"] += 1
         counts["low_confidence"] += int(result_row["pred_low_confidence"])
+        counts["visibility_cautious"] += int(result_row["visibility_cautious"])
         counts["full_report_generated"] += int(result_row["full_report_generated"])
         counts["visibility_retake"] += int(result_row["visibility_retake"])
 
         for reason in reject_reasons or ["__none__"]:
             by_reason[reason]["samples"] += 1
             by_reason[reason]["low_confidence"] += int(result_row["pred_low_confidence"])
+            by_reason[reason]["visibility_cautious"] += int(result_row["visibility_cautious"])
             by_reason[reason]["full_report_generated"] += int(result_row["full_report_generated"])
             by_reason[reason]["visibility_retake"] += int(result_row["visibility_retake"])
 
