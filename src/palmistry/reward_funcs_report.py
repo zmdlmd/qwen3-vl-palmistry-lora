@@ -19,6 +19,41 @@ SECTION_KEYWORDS = (
 SAFE_TERMS = ("手相仅供参考", "仅供参考", "请以生活实际为准", "请以现实实际为准", "真正重要的是当下选择和行动")
 BANNED_TERMS = ("保证", "绝对", "包治", "治愈", "确诊", "注定", "百分之百")
 UNCERTAINTY_TERMS = ("难以判断", "图像不够清晰", "可见信息有限", "看不清", "信息有限", "无法准确判断", "手掌图像模糊")
+CAUTIOUS_TERMS = UNCERTAINTY_TERMS + (
+    "谨慎分析",
+    "保守观察",
+    "仅作保守观察",
+    "建议结合更清晰照片",
+    "建议在自然光下重拍",
+)
+RETAKE_TERMS = (
+    "建议重拍",
+    "重新拍摄",
+    "重新拍一张",
+    "重拍一张",
+    "更清晰的掌心照片",
+)
+DETAIL_TERMS = (
+    "岛纹",
+    "断裂",
+    "分叉",
+    "双重",
+    "二股",
+    "三股",
+    "锁链",
+    "链状",
+    "羽毛状",
+    "十字",
+    "佛眼",
+    "神秘十字",
+    "三奇纹",
+)
+LINE_SECTION_KEYWORDS = {
+    "生命线": ("生命线",),
+    "智慧线": ("智慧线",),
+    "感情线": ("感情线",),
+    "事业线": ("事业线", "事业线与发展节奏"),
+}
 CHINESE_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
@@ -47,6 +82,10 @@ def _safe_parse_payload(text: str) -> dict[str, Any] | None:
         return load_palmistry_payload(_as_text(text))
     except Exception:
         return None
+
+
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    return any(term in text for term in terms)
 
 
 def _strip_report(text: str) -> str:
@@ -85,6 +124,71 @@ def _reference_text(payload: dict[str, Any]) -> str:
             chunks.append(value.strip())
 
     return "\n".join(chunks)
+
+
+def _line_reference_text(payload: dict[str, Any], line_name: str) -> str:
+    analysis = payload.get("palmistry_analysis", {})
+    lines = analysis.get("lines", {})
+    line_payload = lines.get(line_name)
+    if not isinstance(line_payload, dict):
+        return ""
+
+    chunks = [line_name]
+    for field_name in REQUIRED_LINE_FIELDS:
+        value = line_payload.get(field_name)
+        if isinstance(value, str) and value.strip():
+            chunks.append(value.strip())
+    return "\n".join(chunks)
+
+
+def _is_uncertain_reference_line(payload: dict[str, Any], line_name: str) -> bool:
+    return _contains_any(_line_reference_text(payload, line_name), UNCERTAINTY_TERMS)
+
+
+def _first_keyword_pos(text: str, keywords: tuple[str, ...]) -> int | None:
+    positions = []
+    for keyword in keywords:
+        match = re.search(re.escape(keyword), text)
+        if match:
+            positions.append(match.start())
+    return min(positions) if positions else None
+
+
+def _extract_line_sections(text: str) -> dict[str, str]:
+    text = _as_text(text)
+    starts: list[tuple[str, int]] = []
+    for line_name, keywords in LINE_SECTION_KEYWORDS.items():
+        pos = _first_keyword_pos(text, keywords)
+        if pos is not None:
+            starts.append((line_name, pos))
+
+    starts.sort(key=lambda item: item[1])
+    sections: dict[str, str] = {}
+    for index, (line_name, start) in enumerate(starts):
+        end = starts[index + 1][1] if index + 1 < len(starts) else len(text)
+        sections[line_name] = text[start:end].strip()
+    return sections
+
+
+def _estimate_reference_gate(payload: dict[str, Any]) -> str:
+    uncertain_required = sum(1 for line_name in REQUIRED_LINE_NAMES if _is_uncertain_reference_line(payload, line_name))
+    uncertain_optional = sum(1 for line_name in OPTIONAL_LINE_NAMES if _is_uncertain_reference_line(payload, line_name))
+    uncertain_total = uncertain_required + uncertain_optional
+
+    if uncertain_required >= 3 or uncertain_total >= 4:
+        return "retake"
+    if uncertain_required >= 1 or uncertain_total >= 2:
+        return "cautious"
+    return "continue"
+
+
+def _estimate_report_gate(text: str) -> str:
+    text = _as_text(text)
+    if _contains_any(text, RETAKE_TERMS):
+        return "retake"
+    if _contains_any(text, CAUTIOUS_TERMS):
+        return "cautious"
+    return "continue"
 
 
 def _ordered_section_score(text: str) -> float:
@@ -168,6 +272,101 @@ def reference_alignment_reward(completions, assistant, **kwargs):
         overlap = len(pred_ngrams & ref_ngrams) / len(pred_ngrams | ref_ngrams)
         structure = 0.5 * _ordered_section_score(completion) + 0.5 * _required_line_mention_score(completion)
         rewards.append(0.7 * overlap + 0.3 * structure)
+    return rewards
+
+
+def line_level_consistency_reward(completions, assistant, **kwargs):
+    rewards = []
+    for completion, reference in zip(completions, assistant):
+        completion = _as_text(completion)
+        ref_payload = _safe_parse_payload(reference)
+        if ref_payload is None:
+            rewards.append(0.0)
+            continue
+
+        line_sections = _extract_line_sections(completion)
+        line_scores = []
+        for line_name in REQUIRED_LINE_NAMES:
+            section_text = line_sections.get(line_name, "")
+            reference_text = _line_reference_text(ref_payload, line_name)
+            if not section_text or not reference_text:
+                line_scores.append(0.0)
+                continue
+
+            if _contains_any(reference_text, UNCERTAINTY_TERMS):
+                line_scores.append(1.0 if _contains_any(section_text, CAUTIOUS_TERMS) else 0.0)
+                continue
+
+            pred_ngrams = _char_ngram_set(section_text)
+            ref_ngrams = _char_ngram_set(reference_text)
+            if not pred_ngrams or not ref_ngrams:
+                line_scores.append(0.0)
+                continue
+
+            overlap = len(pred_ngrams & ref_ngrams) / len(pred_ngrams | ref_ngrams)
+            line_scores.append(min(1.0, 0.2 + 0.8 * overlap))
+
+        rewards.append(sum(line_scores) / len(line_scores) if line_scores else 0.0)
+    return rewards
+
+
+def hallucination_penalty_reward(completions, assistant, **kwargs):
+    rewards = []
+    for completion, reference in zip(completions, assistant):
+        completion = _as_text(completion)
+        ref_payload = _safe_parse_payload(reference)
+        if ref_payload is None:
+            rewards.append(0.0)
+            continue
+
+        line_sections = _extract_line_sections(completion)
+        checks = 0
+        penalties = 0.0
+
+        for line_name in REQUIRED_LINE_NAMES:
+            section_text = line_sections.get(line_name, "")
+            reference_text = _line_reference_text(ref_payload, line_name)
+            if not section_text or not reference_text:
+                continue
+
+            checks += 1
+            if _contains_any(reference_text, UNCERTAINTY_TERMS) and not _contains_any(section_text, CAUTIOUS_TERMS):
+                penalties += 1.0
+
+            unsupported_details = sum(
+                1 for term in DETAIL_TERMS if term in section_text and term not in reference_text
+            )
+            penalties += min(1.0, unsupported_details * 0.25)
+
+        if checks == 0:
+            rewards.append(0.0)
+            continue
+
+        rewards.append(max(0.0, 1.0 - penalties / checks))
+    return rewards
+
+
+def gate_decision_reward(completions, assistant, **kwargs):
+    reward_matrix = {
+        "continue": {"continue": 1.0, "cautious": 0.6, "retake": 0.0},
+        "cautious": {"continue": 0.2, "cautious": 1.0, "retake": 0.6},
+        "retake": {"continue": 0.0, "cautious": 0.8, "retake": 1.0},
+    }
+
+    rewards = []
+    for completion, reference in zip(completions, assistant):
+        ref_payload = _safe_parse_payload(reference)
+        if ref_payload is None:
+            rewards.append(0.0)
+            continue
+
+        expected_gate = _estimate_reference_gate(ref_payload)
+        predicted_gate = _estimate_report_gate(completion)
+        reward = reward_matrix[expected_gate][predicted_gate]
+
+        if expected_gate == "retake" and _report_char_count(completion) > 600 and predicted_gate == "continue":
+            reward = 0.0
+        rewards.append(reward)
     return rewards
 
 
