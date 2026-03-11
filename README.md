@@ -59,6 +59,7 @@ The current pipeline is:
 
 - Iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
 - Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
+- Uncertainty honesty optimization plan: [docs/uncertainty_honesty_plan.md](docs/uncertainty_honesty_plan.md)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
 - Distillation + GRPO notes: [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 
@@ -103,6 +104,7 @@ This repository now supports two complementary stages beyond basic SFT:
 - Adapter export tool: [tools/export_peft_adapter.py](tools/export_peft_adapter.py)
 - Experiment iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
 - Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
+- Uncertainty honesty optimization plan: [docs/uncertainty_honesty_plan.md](docs/uncertainty_honesty_plan.md)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
 - Distillation + GRPO notes: [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 - Dataset notes: [data/README.md](data/README.md)
@@ -127,6 +129,7 @@ This repository now supports two complementary stages beyond basic SFT:
 ├── docs/
 │   ├── experiment_iterations.md
 │   ├── report_grpo_v2_analysis.md
+│   ├── uncertainty_honesty_plan.md
 │   ├── architecture.md
 │   └── assets/
 ├── scripts/
