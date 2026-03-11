@@ -18,7 +18,19 @@ SECTION_KEYWORDS = (
 )
 SAFE_TERMS = ("手相仅供参考", "仅供参考", "请以生活实际为准", "请以现实实际为准", "真正重要的是当下选择和行动")
 BANNED_TERMS = ("保证", "绝对", "包治", "治愈", "确诊", "注定", "百分之百")
-UNCERTAINTY_TERMS = ("难以判断", "图像不够清晰", "可见信息有限", "看不清", "信息有限", "无法准确判断", "手掌图像模糊")
+UNCERTAINTY_TERMS = (
+    "难以判断",
+    "图像不够清晰",
+    "可见信息有限",
+    "看不清",
+    "信息有限",
+    "无法准确判断",
+    "手掌图像模糊",
+    "模糊",
+    "不清晰",
+    "噪点",
+    "遮挡",
+)
 CAUTIOUS_TERMS = UNCERTAINTY_TERMS + (
     "谨慎分析",
     "保守观察",
@@ -47,6 +59,12 @@ DETAIL_TERMS = (
     "佛眼",
     "神秘十字",
     "三奇纹",
+)
+ASSERTIVE_PATTERNS = (
+    re.compile(r"(明显|清晰|分明).{0,4}(断裂|分叉|岛纹|双重|二股|三股|十字|贯穿)"),
+    re.compile(r"(深|较深|很深).{0,2}(长|较长|很长)"),
+    re.compile(r"(线条|走势).{0,4}(清晰|深刻|明显)"),
+    re.compile(r"(贯穿掌心|清晰可见|深刻有力|深长有力)"),
 )
 LINE_SECTION_KEYWORDS = {
     "生命线": ("生命线",),
@@ -229,6 +247,37 @@ def _reference_uncertainty_score(payload: dict[str, Any]) -> float:
     return min(1.0, uncertainty_hits / 6.0)
 
 
+def _unsupported_detail_count(section_text: str, reference_text: str) -> int:
+    return sum(1 for term in DETAIL_TERMS if term in section_text and term not in reference_text)
+
+
+def _assertive_signal_count(section_text: str) -> int:
+    return sum(len(pattern.findall(section_text)) for pattern in ASSERTIVE_PATTERNS)
+
+
+def _line_uncertainty_honesty_score(section_text: str, reference_text: str) -> float:
+    reference_uncertain = _contains_any(reference_text, UNCERTAINTY_TERMS)
+    cautious = _contains_any(section_text, CAUTIOUS_TERMS)
+    retake = _contains_any(section_text, RETAKE_TERMS)
+    unsupported_details = _unsupported_detail_count(section_text, reference_text)
+    assertive_signals = _assertive_signal_count(section_text)
+
+    if reference_uncertain:
+        score = 1.0 if cautious or retake else 0.0
+        if unsupported_details:
+            score -= min(0.6, unsupported_details * 0.2)
+        if assertive_signals:
+            score -= min(0.6, assertive_signals * 0.25)
+        return max(0.0, min(1.0, score))
+
+    if not section_text:
+        return 0.0
+
+    if cautious or retake:
+        return 0.55
+    return 0.9
+
+
 def report_format_reward(completions, **kwargs):
     rewards = []
     for completion in completions:
@@ -381,11 +430,74 @@ def uncertainty_honesty_reward(completions, assistant, **kwargs):
 
         expected_uncertainty = _reference_uncertainty_score(ref_payload)
         mentions_uncertainty = any(term in completion for term in UNCERTAINTY_TERMS)
+        line_sections = _extract_line_sections(completion)
 
-        if expected_uncertainty >= 0.5:
-            rewards.append(1.0 if mentions_uncertainty else 0.0)
+        line_scores = []
+        for line_name in REQUIRED_LINE_NAMES:
+            reference_text = _line_reference_text(ref_payload, line_name)
+            if not reference_text:
+                continue
+            section_text = line_sections.get(line_name, "")
+            line_scores.append(_line_uncertainty_honesty_score(section_text, reference_text))
+
+        if line_scores:
+            line_score = sum(line_scores) / len(line_scores)
         else:
-            rewards.append(0.7 if not mentions_uncertainty else 0.4)
+            if expected_uncertainty >= 0.5:
+                line_score = 1.0 if mentions_uncertainty else 0.0
+            else:
+                line_score = 0.7 if not mentions_uncertainty else 0.4
+
+        predicted_gate = _estimate_report_gate(completion)
+        expected_gate = _estimate_reference_gate(ref_payload)
+        gate_bonus = 0.0
+        if expected_gate == "retake" and predicted_gate == "retake":
+            gate_bonus = 0.1
+        elif expected_gate == "cautious" and predicted_gate in {"cautious", "retake"}:
+            gate_bonus = 0.1
+        elif expected_gate == "continue" and predicted_gate == "continue":
+            gate_bonus = 0.05
+
+        rewards.append(min(1.0, line_score + gate_bonus))
+    return rewards
+
+
+def uncertainty_contradiction_penalty_reward(completions, assistant, **kwargs):
+    rewards = []
+    for completion, reference in zip(completions, assistant):
+        completion = _as_text(completion)
+        ref_payload = _safe_parse_payload(reference)
+        if ref_payload is None:
+            rewards.append(0.0)
+            continue
+
+        line_sections = _extract_line_sections(completion)
+        checks = 0
+        penalties = 0.0
+
+        for line_name in REQUIRED_LINE_NAMES:
+            section_text = line_sections.get(line_name, "")
+            reference_text = _line_reference_text(ref_payload, line_name)
+            if not section_text or not reference_text:
+                continue
+
+            checks += 1
+            cautious = _contains_any(section_text, CAUTIOUS_TERMS)
+            assertive_signals = _assertive_signal_count(section_text)
+            unsupported_details = _unsupported_detail_count(section_text, reference_text)
+            reference_uncertain = _contains_any(reference_text, UNCERTAINTY_TERMS)
+
+            if cautious and (assertive_signals > 0 or unsupported_details > 0):
+                penalties += 1.0
+
+            if reference_uncertain and (assertive_signals > 0 or unsupported_details > 0):
+                penalties += min(1.0, 0.5 + unsupported_details * 0.2 + assertive_signals * 0.2)
+
+        if checks == 0:
+            rewards.append(0.0)
+            continue
+
+        rewards.append(max(0.0, 1.0 - penalties / checks))
     return rewards
 
 
