@@ -58,6 +58,7 @@ The current pipeline is:
 ## Experiment Notes
 
 - Iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
+- Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
 - Distillation + GRPO notes: [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 
@@ -101,6 +102,7 @@ This repository now supports two complementary stages beyond basic SFT:
 - Gradio demo: [apps/gradio_palmistry.py](apps/gradio_palmistry.py)
 - Adapter export tool: [tools/export_peft_adapter.py](tools/export_peft_adapter.py)
 - Experiment iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
+- Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
 - Distillation + GRPO notes: [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 - Dataset notes: [data/README.md](data/README.md)
@@ -124,6 +126,7 @@ This repository now supports two complementary stages beyond basic SFT:
 │   └── examples/
 ├── docs/
 │   ├── experiment_iterations.md
+│   ├── report_grpo_v2_analysis.md
 │   ├── architecture.md
 │   └── assets/
 ├── scripts/
