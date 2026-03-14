@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 
 import gradio as gr
@@ -124,6 +125,36 @@ button.primary {
   line-height: 1.6;
   font-size: 14px;
 }
+
+.status-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.status-meta-item {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.status-meta-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 3px;
+}
+
+.status-meta-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  word-break: break-word;
+}
 """
 
 
@@ -146,6 +177,66 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
+    def format_probability(value):
+        if value is None:
+            return "N/A"
+        return f"{float(value):.1%}"
+
+    def compute_margin(probabilities):
+        if not isinstance(probabilities, dict) or not probabilities:
+            return None
+        ranked = sorted((float(v) for v in probabilities.values()), reverse=True)
+        if len(ranked) < 2:
+            return ranked[0]
+        return ranked[0] - ranked[1]
+
+    def gate_source_label(visibility_assessment):
+        source = str((visibility_assessment or {}).get("source", "")).strip()
+        if source == "standalone_gate_classifier":
+            return "独立 Classifier"
+        if source == "generative_gate":
+            return "生成式 Gate"
+        if source == "error_fallback":
+            return "错误回退"
+        return "未标注"
+
+    def build_status_meta_html(visibility_assessment):
+        if visibility_assessment is None:
+            return ""
+
+        probabilities = visibility_assessment.get("classifier_probabilities")
+        confidence = visibility_assessment.get("classifier_confidence")
+        margin = compute_margin(probabilities)
+        raw_decision = visibility_assessment.get("classifier_raw_decision")
+        threshold_applied = visibility_assessment.get("classifier_threshold_applied")
+        decision_label = visibility_assessment.get("decision_label") or visibility_assessment.get("建议") or ""
+
+        meta_items = [
+            ("Gate Source", gate_source_label(visibility_assessment)),
+            ("当前决策", str(decision_label or visibility_assessment.get("decision", "N/A"))),
+        ]
+
+        if confidence is not None:
+            meta_items.append(("Confidence", format_probability(confidence)))
+        if margin is not None:
+            meta_items.append(("Margin", format_probability(margin)))
+        if raw_decision:
+            meta_items.append(("Raw Decision", str(raw_decision)))
+        if threshold_applied is not None:
+            meta_items.append(("Threshold", "已触发" if threshold_applied else "未触发"))
+
+        blocks = []
+        for label, value in meta_items:
+            blocks.append(
+                f"""
+                <div class="status-meta-item">
+                  <div class="status-meta-label">{html.escape(label)}</div>
+                  <div class="status-meta-value">{html.escape(str(value))}</div>
+                </div>
+                """.strip()
+            )
+        return f'<div class="status-meta">{"".join(blocks)}</div>'
+
     def format_status_html(gate_decision, caution_message, visibility_assessment):
         if visibility_assessment is None:
             return """
@@ -173,11 +264,13 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
             title = "当前照片已通过保守质检"
 
         extra = caution_message or "图像质量和主线可见性已达到继续分析的最低要求。"
+        meta_html = build_status_meta_html(visibility_assessment)
         return f"""
         <div id="status-shell" class="{status_class}">
           <div class="status-badge {badge_class}">{badge}</div>
           <div class="status-title">{title}</div>
           <div class="status-copy">{extra}</div>
+          {meta_html}
         </div>
         """.strip()
 
