@@ -108,6 +108,7 @@ This repository now supports two complementary stages beyond basic SFT:
 - Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
 - Uncertainty honesty optimization plan: [docs/uncertainty_honesty_plan.md](docs/uncertainty_honesty_plan.md)
 - Gate classifier training notes: [docs/gate_classifier_training.md](docs/gate_classifier_training.md)
+- Gate classifier vs generative gate: [docs/gate_classifier_vs_generative_gate.md](docs/gate_classifier_vs_generative_gate.md)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
 - Distillation + GRPO notes: [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 - Dataset notes: [data/README.md](data/README.md)

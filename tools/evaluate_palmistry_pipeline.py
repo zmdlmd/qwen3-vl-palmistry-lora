@@ -42,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default=None, help="Runtime device")
     parser.add_argument("--device-map", default="auto", help="Transformers device_map")
     parser.add_argument("--torch-dtype", default="auto", help="auto | bf16 | fp16 | fp32")
+    parser.add_argument("--gate-classifier-path", default=None, help="Optional standalone gate classifier checkpoint path")
+    parser.add_argument("--gate-classifier-device", default=None, help="Standalone gate classifier runtime device")
     parser.add_argument("--style", default="balanced", choices=["balanced", "soft", "professional"])
     parser.add_argument("--report-max-new-tokens", type=int, default=900)
     parser.add_argument("--structured-max-new-tokens", type=int, default=1400)
@@ -52,6 +54,12 @@ def parse_args() -> argparse.Namespace:
         default="gate_only",
         choices=["gate_only", "full"],
         help="gate_only only runs visibility gating on hard cases; full runs the full pipeline.",
+    )
+    parser.add_argument(
+        "--val-mode",
+        default="full",
+        choices=["gate_only", "full"],
+        help="gate_only only runs gate evaluation on val samples; full runs the complete pipeline.",
     )
     parser.add_argument(
         "--progress-every",
@@ -276,6 +284,7 @@ def evaluate_visibility_only(
         return {
             "pred_low_confidence": visibility_retake or visibility_cautious,
             "pred_gate_decision": gate_policy.decision,
+            "gate_source": str(visibility_assessment.get("source", "generative_gate")),
             "pred_uncertain_main_lines": len(REQUIRED_LINE_NAMES) if visibility_retake else int(visibility_cautious),
             "pred_uncertain_lines": list(REQUIRED_LINE_NAMES) if visibility_retake else ([] if not visibility_cautious else ["主要掌纹"]),
             "visibility_assessment": visibility_assessment,
@@ -290,6 +299,7 @@ def evaluate_visibility_only(
         return {
             "pred_low_confidence": True,
             "pred_gate_decision": "retake",
+            "gate_source": "error_fallback",
             "pred_uncertain_main_lines": len(REQUIRED_LINE_NAMES),
             "pred_uncertain_lines": list(REQUIRED_LINE_NAMES),
             "visibility_assessment": None,
@@ -311,6 +321,7 @@ def evaluate_val_split(
     structured_max_new_tokens: int,
     temperature: float,
     top_p: float,
+    val_mode: str,
     progress_every: int,
     summary_every: int,
     sample_writer: Callable[[dict[str, Any]], None] | None = None,
@@ -328,57 +339,83 @@ def evaluate_val_split(
         expected_uncertain_main_lines = count_uncertain_main_lines(reference_payload)
         expected_low_confidence = expected_uncertain_main_lines > 1
 
-        result = pipeline.analyze_detailed(
-            image_root / record["image"],
-            style=style,
-            max_new_tokens=report_max_new_tokens,
-            structured_max_new_tokens=structured_max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-        )
+        if val_mode == "gate_only":
+            result_row = evaluate_visibility_only(
+                pipeline,
+                image_root / record["image"],
+                temperature=temperature,
+                top_p=top_p,
+            )
+            sample_row: dict[str, Any] = {
+                "split": "val",
+                "evaluation_mode": val_mode,
+                "id": record["id"],
+                "image": record["image"],
+                "expected_low_confidence": expected_low_confidence,
+                "expected_uncertain_main_lines": expected_uncertain_main_lines,
+                **result_row,
+            }
+            visibility_retake = result_row["visibility_retake"]
+            visibility_cautious = result_row["visibility_cautious"]
+            full_report_generated = result_row["full_report_generated"]
+            result_structured_json = ""
+            result_report = ""
+        else:
+            result = pipeline.analyze_detailed(
+                image_root / record["image"],
+                style=style,
+                max_new_tokens=report_max_new_tokens,
+                structured_max_new_tokens=structured_max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+            )
 
-        sample_row: dict[str, Any] = {
-            "split": "val",
-            "id": record["id"],
-            "image": record["image"],
-            "expected_low_confidence": expected_low_confidence,
-            "expected_uncertain_main_lines": expected_uncertain_main_lines,
-            "pred_low_confidence": result.low_confidence,
-            "pred_gate_decision": result.gate_decision,
-            "pred_uncertain_main_lines": result.uncertain_main_lines,
-            "pred_uncertain_lines": result.uncertain_lines,
-            "visibility_assessment": result.visibility_assessment,
-            "caution_message": result.caution_message,
-            "error": result.error,
-        }
-        visibility_retake = bool(
-            result.visibility_assessment
-            and pipeline._visibility_requires_retake(result.visibility_assessment)
-        )
-        visibility_cautious = bool(
-            result.visibility_assessment
-            and pipeline._visibility_is_cautious(result.visibility_assessment)
-        )
-        full_report_generated = bool(result.report) and result.report != result.caution_message
+            sample_row = {
+                "split": "val",
+                "evaluation_mode": val_mode,
+                "id": record["id"],
+                "image": record["image"],
+                "expected_low_confidence": expected_low_confidence,
+                "expected_uncertain_main_lines": expected_uncertain_main_lines,
+                "pred_low_confidence": result.low_confidence,
+                "pred_gate_decision": result.gate_decision,
+                "gate_source": str((result.visibility_assessment or {}).get("source", "generative_gate")),
+                "pred_uncertain_main_lines": result.uncertain_main_lines,
+                "pred_uncertain_lines": result.uncertain_lines,
+                "visibility_assessment": result.visibility_assessment,
+                "caution_message": result.caution_message,
+                "error": result.error,
+            }
+            visibility_retake = bool(
+                result.visibility_assessment
+                and pipeline._visibility_requires_retake(result.visibility_assessment)
+            )
+            visibility_cautious = bool(
+                result.visibility_assessment
+                and pipeline._visibility_is_cautious(result.visibility_assessment)
+            )
+            full_report_generated = bool(result.report) and result.report != result.caution_message
+            result_structured_json = result.structured_json
+            result_report = result.report
 
         counts["samples"] += 1
-        counts["low_confidence"] += int(result.low_confidence)
+        counts["low_confidence"] += int(sample_row["pred_low_confidence"])
         counts["expected_low_confidence"] += int(expected_low_confidence)
-        counts["gate_match"] += int(result.low_confidence == expected_low_confidence)
-        count_gate_decision(counts, result.gate_decision)
+        counts["gate_match"] += int(sample_row["pred_low_confidence"] == expected_low_confidence)
+        count_gate_decision(counts, sample_row["pred_gate_decision"])
         counts["visibility_cautious"] += int(visibility_cautious)
         counts["visibility_retake"] += int(visibility_retake)
         counts["full_report_generated"] += int(full_report_generated)
 
-        if result.structured_json:
-            sample_structured = structured_metrics(result.structured_json, reference_json)
+        if result_structured_json:
+            sample_structured = structured_metrics(result_structured_json, reference_json)
             sample_row["structured_metrics"] = sample_structured
             for key, value in sample_structured.items():
                 structured_summary[key].append(value)
             counts["structured_available"] += 1
 
-        if full_report_generated:
-            sample_report = report_metrics(result.report, reference_json)
+        if full_report_generated and result_report:
+            sample_report = report_metrics(result_report, reference_json)
             sample_row["report_metrics"] = sample_report
             for key, value in sample_report.items():
                 report_summary[key].append(value)
@@ -446,6 +483,8 @@ def evaluate_hard_cases(
             full_report_generated = bool(result.report) and result.report != result.caution_message
             result_row = {
                 "pred_low_confidence": result.low_confidence,
+                "pred_gate_decision": result.gate_decision,
+                "gate_source": str((result.visibility_assessment or {}).get("source", "generative_gate")),
                 "pred_uncertain_main_lines": result.uncertain_main_lines,
                 "pred_uncertain_lines": result.uncertain_lines,
                 "visibility_assessment": result.visibility_assessment,
@@ -514,6 +553,8 @@ def main() -> None:
         device=args.device,
         device_map=args.device_map,
         torch_dtype=args.torch_dtype,
+        gate_classifier_path=args.gate_classifier_path,
+        gate_classifier_device=args.gate_classifier_device,
     )
 
     base_summary: dict[str, Any] = {
@@ -522,6 +563,10 @@ def main() -> None:
         "image_root": str(image_root),
         "style": args.style,
         "hard_mode": args.hard_mode,
+        "val_mode": args.val_mode,
+        "gate_classifier_path": args.gate_classifier_path,
+        "gate_classifier_device": args.gate_classifier_device,
+        "gate_mode": "classifier" if args.gate_classifier_path else "generative",
     }
 
     val_summary: dict[str, Any] | None = None
@@ -549,6 +594,7 @@ def main() -> None:
             structured_max_new_tokens=args.structured_max_new_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
+            val_mode=args.val_mode,
             progress_every=args.progress_every,
             summary_every=args.summary_every,
             sample_writer=sample_writer,

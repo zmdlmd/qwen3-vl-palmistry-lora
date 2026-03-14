@@ -33,12 +33,15 @@ HARD_LIMIT="${HARD_LIMIT:-}"
 DEVICE="${DEVICE:-cuda:0}"
 DEVICE_MAP="${DEVICE_MAP:-auto}"
 TORCH_DTYPE="${TORCH_DTYPE:-auto}"
+GATE_CLASSIFIER_PATH="${GATE_CLASSIFIER_PATH:-}"
+GATE_CLASSIFIER_DEVICE="${GATE_CLASSIFIER_DEVICE:-}"
 STYLE="${STYLE:-balanced}"
 REPORT_MAX_NEW_TOKENS="${REPORT_MAX_NEW_TOKENS:-900}"
 STRUCTURED_MAX_NEW_TOKENS="${STRUCTURED_MAX_NEW_TOKENS:-1400}"
 TEMPERATURE="${TEMPERATURE:-0.2}"
 TOP_P="${TOP_P:-0.9}"
 HARD_MODE="${HARD_MODE:-gate_only}"
+VAL_MODE="${VAL_MODE:-full}"
 PROGRESS_EVERY="${PROGRESS_EVERY:-10}"
 SUMMARY_EVERY="${SUMMARY_EVERY:-25}"
 
@@ -85,9 +88,18 @@ CMD=(
   --temperature "${TEMPERATURE}"
   --top-p "${TOP_P}"
   --hard-mode "${HARD_MODE}"
+  --val-mode "${VAL_MODE}"
   --progress-every "${PROGRESS_EVERY}"
   --summary-every "${SUMMARY_EVERY}"
 )
+
+if [[ -n "${GATE_CLASSIFIER_PATH}" ]]; then
+  CMD+=(--gate-classifier-path "${GATE_CLASSIFIER_PATH}")
+fi
+
+if [[ -n "${GATE_CLASSIFIER_DEVICE}" ]]; then
+  CMD+=(--gate-classifier-device "${GATE_CLASSIFIER_DEVICE}")
+fi
 
 if [[ -n "${VAL_JSON}" ]]; then
   CMD+=(--val-json "${VAL_JSON}")
