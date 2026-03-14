@@ -47,6 +47,26 @@ Behavior:
 
 - gate decision comes from the standalone EfficientNet-B0 classifier
 - inference runtime falls back to the generative gate only if classifier inference fails
+- the current default runtime also applies confidence thresholds to downgrade unstable edge decisions into `cautious`
+
+### 3. Thresholded Classifier Gate
+
+Summary:
+
+- [palmistry_eval.gate_ab.classifier_thresholded.summary.json](/root/autodl-tmp/Qwen/Qwen3_FineTune/Qwen-VL-Series-Finetune/artifacts/evals/palmistry_eval.gate_ab.classifier_thresholded.summary.json)
+
+Thresholds:
+
+- `global_min_confidence = 0.55`
+- `continue_min_confidence = 0.65`
+- `retake_min_confidence = 0.65`
+- `min_margin = 0.10`
+
+Behavior:
+
+- low-confidence `continue` predictions are downgraded to `cautious`
+- low-confidence `retake` predictions are also downgraded to `cautious`
+- this makes the standalone classifier safer as a production front-end gate
 
 ## Results
 
@@ -110,6 +130,50 @@ This is exactly the behavior we want from a front-end gate:
 - extreme quality failures should mostly become `retake`
 - borderline failures can remain `cautious`
 
+## Thresholded Classifier Results
+
+### Fixed Val 50
+
+Thresholded classifier gate:
+
+- `low_confidence_rate = 0.88`
+- `gate_match_rate = 0.82`
+- `gate_continue_rate = 0.12`
+- `gate_cautious_rate = 0.56`
+- `gate_retake_rate = 0.32`
+
+Compared with the raw classifier:
+
+- `continue` is reduced from `0.18 -> 0.12`
+- `cautious` is increased from `0.40 -> 0.56`
+- `gate_match_rate` changes slightly from `0.84 -> 0.82`
+
+Interpretation:
+
+- the thresholded variant is slightly more conservative on validation data
+- the cost is a small drop in match rate
+- the benefit is fewer unstable `continue` decisions
+
+### Fixed Hard 200
+
+Thresholded classifier gate:
+
+- `low_confidence_rate = 0.96`
+- `gate_continue_rate = 0.04`
+- `gate_cautious_rate = 0.655`
+- `gate_retake_rate = 0.305`
+
+Compared with the raw classifier:
+
+- `continue` is reduced from `0.085 -> 0.04`
+- `low_confidence_rate` improves from `0.915 -> 0.96`
+
+Interpretation:
+
+- this is a better production default
+- severe failures still keep substantial `retake` coverage
+- the threshold layer removes weak `continue` decisions on hard samples
+
 ## Runtime Difference
 
 The speed gap is large.
@@ -123,7 +187,7 @@ This means the standalone classifier is not only better calibrated, but also far
 
 ## Main Conclusion
 
-The standalone gate classifier is the better default gate implementation.
+The standalone gate classifier is the better default gate implementation, and the thresholded classifier is the safer production variant.
 
 Why:
 
@@ -131,12 +195,13 @@ Why:
 - better alignment on fixed validation samples
 - more meaningful separation between `cautious` and `retake`
 - much faster runtime
+- with thresholds, fewer unstable edge decisions are allowed through as `continue`
 
 The generative gate remains useful as a fallback or debugging path, but it is not a good default front-end gate because it collapses too easily into a single conservative mode.
 
 ## Recommended Deployment Policy
 
-1. Use the standalone classifier as the default gate.
+1. Use the thresholded standalone classifier as the default gate.
 2. Keep the generative gate as a fallback path when the classifier checkpoint is missing or runtime inference fails.
 3. Continue improving the classifier with better `cautious` labels and a real-photo holdout set.
 

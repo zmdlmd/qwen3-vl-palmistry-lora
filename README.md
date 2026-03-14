@@ -285,6 +285,7 @@ python -m tools.infer_palmistry \
 ```
 
 If `--gate-classifier-path` is set, the runtime uses the standalone three-class gate classifier first and only falls back to the old generative gate if the classifier path is missing or inference fails.
+The standalone classifier also applies conservative confidence thresholds by default, so borderline `continue` or `retake` predictions are downgraded to `cautious` instead of forcing an unstable decision.
 
 ### 5. Run Gradio Demo
 

@@ -11,7 +11,7 @@ from transformers import AutoProcessor
 from transformers.models.qwen3_vl import Qwen3VLForConditionalGeneration
 
 from .config import default_device, env_or_default, resolve_torch_dtype
-from .gate_classifier_runtime import StandaloneGateClassifier
+from .gate_classifier_runtime import GateClassifierThresholds, StandaloneGateClassifier
 from .gate_policy import (
     GATE_DECISION_CAUTIOUS,
     GATE_DECISION_CONTINUE,
@@ -78,6 +78,10 @@ class PalmistryPipeline:
         torch_dtype: str = "auto",
         gate_classifier_path: str | None = None,
         gate_classifier_device: str | None = None,
+        gate_classifier_min_confidence: float = 0.55,
+        gate_classifier_continue_min_confidence: float = 0.65,
+        gate_classifier_retake_min_confidence: float = 0.65,
+        gate_classifier_min_margin: float = 0.10,
     ) -> None:
         self.base_model_path = base_model_path
         self.lora_path = lora_path
@@ -88,11 +92,18 @@ class PalmistryPipeline:
         self.dtype = resolve_torch_dtype(torch_dtype, device=self.device)
         self.gate_classifier_path = gate_classifier_path
         self.gate_classifier_device = gate_classifier_device or self.device
+        self.gate_classifier_thresholds = GateClassifierThresholds(
+            global_min_confidence=gate_classifier_min_confidence,
+            continue_min_confidence=gate_classifier_continue_min_confidence,
+            retake_min_confidence=gate_classifier_retake_min_confidence,
+            min_margin=gate_classifier_min_margin,
+        )
         self.gate_classifier: StandaloneGateClassifier | None = None
         if self.gate_classifier_path:
             self.gate_classifier = StandaloneGateClassifier(
                 self.gate_classifier_path,
                 device=self.gate_classifier_device,
+                thresholds=self.gate_classifier_thresholds,
             )
 
         self.processor = AutoProcessor.from_pretrained(self.base_model_path)
@@ -122,6 +133,10 @@ class PalmistryPipeline:
             torch_dtype=env_or_default("TORCH_DTYPE", "auto") or "auto",
             gate_classifier_path=env_or_default("GATE_CLASSIFIER_PATH"),
             gate_classifier_device=env_or_default("GATE_CLASSIFIER_DEVICE"),
+            gate_classifier_min_confidence=float(env_or_default("GATE_CLASSIFIER_MIN_CONFIDENCE", "0.55")),
+            gate_classifier_continue_min_confidence=float(env_or_default("GATE_CLASSIFIER_CONTINUE_MIN_CONFIDENCE", "0.65")),
+            gate_classifier_retake_min_confidence=float(env_or_default("GATE_CLASSIFIER_RETAKE_MIN_CONFIDENCE", "0.65")),
+            gate_classifier_min_margin=float(env_or_default("GATE_CLASSIFIER_MIN_MARGIN", "0.10")),
         )
 
     @staticmethod

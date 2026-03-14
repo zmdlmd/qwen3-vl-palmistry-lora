@@ -84,15 +84,25 @@ class GateClassifierPrediction:
     probabilities: dict[str, float]
 
 
+@dataclass(frozen=True)
+class GateClassifierThresholds:
+    global_min_confidence: float = 0.55
+    continue_min_confidence: float = 0.65
+    retake_min_confidence: float = 0.65
+    min_margin: float = 0.10
+
+
 class StandaloneGateClassifier:
     def __init__(
         self,
         checkpoint_path: str | Path,
         *,
         device: str = "cpu",
+        thresholds: GateClassifierThresholds | None = None,
     ) -> None:
         self.checkpoint_path = str(checkpoint_path)
         self.device = device
+        self.thresholds = thresholds or GateClassifierThresholds()
         checkpoint = torch.load(self.checkpoint_path, map_location="cpu")
         self.model_name = str(checkpoint.get("model_name", "resnet18"))
         self.image_size = int(checkpoint.get("image_size", 224))
@@ -128,9 +138,33 @@ class StandaloneGateClassifier:
             probabilities=probabilities,
         )
 
+    def _apply_thresholds(self, prediction: GateClassifierPrediction) -> GateClassifierPrediction:
+        ranked = sorted(prediction.probabilities.items(), key=lambda kv: kv[1], reverse=True)
+        top_label, top_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+        margin = top_score - second_score
+        decision = prediction.decision
+
+        if top_score < self.thresholds.global_min_confidence or margin < self.thresholds.min_margin:
+            decision = GATE_DECISION_CAUTIOUS
+        elif decision == GATE_DECISION_CONTINUE and top_score < self.thresholds.continue_min_confidence:
+            decision = GATE_DECISION_CAUTIOUS
+        elif decision == GATE_DECISION_RETAKE and top_score < self.thresholds.retake_min_confidence:
+            decision = GATE_DECISION_CAUTIOUS
+
+        if decision == prediction.decision:
+            return prediction
+        return GateClassifierPrediction(
+            decision=decision,
+            confidence=prediction.confidence,
+            probabilities=prediction.probabilities,
+        )
+
     def predict_decision(self, image: str | Path | Any) -> GatePolicyDecision:
-        prediction = self.predict(image)
+        raw_prediction = self.predict(image)
+        prediction = self._apply_thresholds(raw_prediction)
         metadata = dict(_DECISION_METADATA[prediction.decision])
+        threshold_applied = prediction.decision != raw_prediction.decision
         raw_payload = {
             "source": "standalone_gate_classifier",
             "checkpoint_path": self.checkpoint_path,
@@ -143,7 +177,15 @@ class StandaloneGateClassifier:
             "依据": metadata["rationale"],
             "classifier_confidence": round(prediction.confidence, 4),
             "classifier_probabilities": {
-                label: round(score, 4) for label, score in prediction.probabilities.items()
+                label: round(score, 4) for label, score in raw_prediction.probabilities.items()
+            },
+            "classifier_raw_decision": raw_prediction.decision,
+            "classifier_threshold_applied": threshold_applied,
+            "classifier_thresholds": {
+                "global_min_confidence": self.thresholds.global_min_confidence,
+                "continue_min_confidence": self.thresholds.continue_min_confidence,
+                "retake_min_confidence": self.thresholds.retake_min_confidence,
+                "min_margin": self.thresholds.min_margin,
             },
         }
         return GatePolicyDecision(

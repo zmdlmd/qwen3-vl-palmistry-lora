@@ -17,6 +17,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--torch-dtype", default="auto", help="auto | bf16 | fp16 | fp32")
     parser.add_argument("--gate-classifier-path", default=None, help="Optional standalone gate classifier checkpoint path")
     parser.add_argument("--gate-classifier-device", default=None, help="Standalone gate classifier runtime device")
+    parser.add_argument("--gate-classifier-min-confidence", type=float, default=0.55)
+    parser.add_argument("--gate-classifier-continue-min-confidence", type=float, default=0.65)
+    parser.add_argument("--gate-classifier-retake-min-confidence", type=float, default=0.65)
+    parser.add_argument("--gate-classifier-min-margin", type=float, default=0.10)
     parser.add_argument("--max-new-tokens", type=int, default=1200)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
@@ -35,6 +39,10 @@ def main() -> None:
         torch_dtype=args.torch_dtype,
         gate_classifier_path=args.gate_classifier_path,
         gate_classifier_device=args.gate_classifier_device,
+        gate_classifier_min_confidence=args.gate_classifier_min_confidence,
+        gate_classifier_continue_min_confidence=args.gate_classifier_continue_min_confidence,
+        gate_classifier_retake_min_confidence=args.gate_classifier_retake_min_confidence,
+        gate_classifier_min_margin=args.gate_classifier_min_margin,
     )
 
     result = pipeline.analyze_detailed(
