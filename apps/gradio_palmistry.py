@@ -134,6 +134,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default=None, help="Runtime device, e.g. cuda or cpu")
     parser.add_argument("--device-map", default="auto", help="Transformers device_map")
     parser.add_argument("--torch-dtype", default="auto", help="auto | bf16 | fp16 | fp32")
+    parser.add_argument("--gate-classifier-path", default=None, help="Optional standalone gate classifier checkpoint path")
+    parser.add_argument("--gate-classifier-device", default=None, help="Standalone gate classifier runtime device")
     parser.add_argument("--server-name", default="0.0.0.0")
     parser.add_argument("--server-port", type=int, default=7860)
     return parser.parse_args()
@@ -335,6 +337,8 @@ def main() -> None:
         device=args.device or default_device(),
         device_map=args.device_map,
         torch_dtype=args.torch_dtype,
+        gate_classifier_path=args.gate_classifier_path,
+        gate_classifier_device=args.gate_classifier_device,
     )
     demo = build_app(pipeline)
     demo.launch(server_name=args.server_name, server_port=args.server_port, share=False)

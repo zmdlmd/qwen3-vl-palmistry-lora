@@ -97,14 +97,17 @@ This repository now supports two complementary stages beyond basic SFT:
 - Palmistry schema + teacher pipeline: [src/palmistry/schema.py](src/palmistry/schema.py), [src/palmistry/teacher.py](src/palmistry/teacher.py)
 - Palmistry GRPO rewards: [src/palmistry/reward_funcs_structured.py](src/palmistry/reward_funcs_structured.py), [src/palmistry/reward_funcs_report.py](src/palmistry/reward_funcs_report.py)
 - Palmistry inference pipeline: [src/palmistry/pipeline.py](src/palmistry/pipeline.py)
+- Standalone gate classifier runtime: [src/palmistry/gate_classifier_runtime.py](src/palmistry/gate_classifier_runtime.py)
 - CLI inference: [tools/infer_palmistry.py](tools/infer_palmistry.py)
 - Teacher data generation CLI: [tools/generate_teacher_dataset.py](tools/generate_teacher_dataset.py)
 - Report GRPO dataset builder: [tools/build_report_grpo_dataset.py](tools/build_report_grpo_dataset.py)
+- Gate classifier trainer: [tools/train_gate_classifier.py](tools/train_gate_classifier.py)
 - Gradio demo: [apps/gradio_palmistry.py](apps/gradio_palmistry.py)
 - Adapter export tool: [tools/export_peft_adapter.py](tools/export_peft_adapter.py)
 - Experiment iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
 - Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
 - Uncertainty honesty optimization plan: [docs/uncertainty_honesty_plan.md](docs/uncertainty_honesty_plan.md)
+- Gate classifier training notes: [docs/gate_classifier_training.md](docs/gate_classifier_training.md)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
 - Distillation + GRPO notes: [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 - Dataset notes: [data/README.md](data/README.md)
@@ -122,6 +125,7 @@ This repository now supports two complementary stages beyond basic SFT:
 │       ├── inference.env.example
 │       ├── report_grpo_data.env.example
 │       ├── teacher_generation.env.example
+│       ├── train_gate_classifier.env.example
 │       └── train_lora.env.example
 ├── data/
 │   ├── README.md
@@ -274,16 +278,20 @@ The current inference stack now uses an independent three-class gate policy:
 python -m tools.infer_palmistry \
   --base-model /path/to/Qwen3-VL-8B-Instruct \
   --lora-path ./output/palmistry_lora_qwen3_vl_8b \
+  --gate-classifier-path ./output/palmistry_gate_classifier_efficientnet_b0_v1/best.pt \
   --image /path/to/hand.png \
   --style balanced
 ```
+
+If `--gate-classifier-path` is set, the runtime uses the standalone three-class gate classifier first and only falls back to the old generative gate if the classifier path is missing or inference fails.
 
 ### 5. Run Gradio Demo
 
 ```bash
 python -m apps.gradio_palmistry \
   --base-model /path/to/Qwen3-VL-8B-Instruct \
-  --lora-path ./output/palmistry_lora_qwen3_vl_8b
+  --lora-path ./output/palmistry_lora_qwen3_vl_8b \
+  --gate-classifier-path ./output/palmistry_gate_classifier_efficientnet_b0_v1/best.pt
 ```
 
 ## GRPO Reinforcement Learning

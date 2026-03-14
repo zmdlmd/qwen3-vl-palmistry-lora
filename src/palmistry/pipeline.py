@@ -11,6 +11,7 @@ from transformers import AutoProcessor
 from transformers.models.qwen3_vl import Qwen3VLForConditionalGeneration
 
 from .config import default_device, env_or_default, resolve_torch_dtype
+from .gate_classifier_runtime import StandaloneGateClassifier
 from .gate_policy import (
     GATE_DECISION_CAUTIOUS,
     GATE_DECISION_CONTINUE,
@@ -75,6 +76,8 @@ class PalmistryPipeline:
         device: str | None = None,
         device_map: str = "auto",
         torch_dtype: str = "auto",
+        gate_classifier_path: str | None = None,
+        gate_classifier_device: str | None = None,
     ) -> None:
         self.base_model_path = base_model_path
         self.lora_path = lora_path
@@ -83,6 +86,14 @@ class PalmistryPipeline:
             self.device = "cpu"
         self.device_map = device_map
         self.dtype = resolve_torch_dtype(torch_dtype, device=self.device)
+        self.gate_classifier_path = gate_classifier_path
+        self.gate_classifier_device = gate_classifier_device or self.device
+        self.gate_classifier: StandaloneGateClassifier | None = None
+        if self.gate_classifier_path:
+            self.gate_classifier = StandaloneGateClassifier(
+                self.gate_classifier_path,
+                device=self.gate_classifier_device,
+            )
 
         self.processor = AutoProcessor.from_pretrained(self.base_model_path)
         base_model = Qwen3VLForConditionalGeneration.from_pretrained(
@@ -109,6 +120,8 @@ class PalmistryPipeline:
             device=env_or_default("DEVICE", default_device()),
             device_map=env_or_default("DEVICE_MAP", "auto") or "auto",
             torch_dtype=env_or_default("TORCH_DTYPE", "auto") or "auto",
+            gate_classifier_path=env_or_default("GATE_CLASSIFIER_PATH"),
+            gate_classifier_device=env_or_default("GATE_CLASSIFIER_DEVICE"),
         )
 
     @staticmethod
@@ -286,7 +299,7 @@ class PalmistryPipeline:
             top_p=top_p,
         ).to_visibility_assessment()
 
-    def assess_gate_policy(
+    def _assess_gate_policy_with_generator(
         self,
         image: str | Path | Any,
         *,
@@ -301,6 +314,26 @@ class PalmistryPipeline:
             top_p=top_p,
         )
         return parse_gate_policy_payload(raw_output)
+
+    def assess_gate_policy(
+        self,
+        image: str | Path | Any,
+        *,
+        max_new_tokens: int = 260,
+        temperature: float = 0.1,
+        top_p: float = 0.9,
+    ) -> GatePolicyDecision:
+        if self.gate_classifier is not None:
+            try:
+                return self.gate_classifier.predict_decision(image)
+            except Exception:
+                pass
+        return self._assess_gate_policy_with_generator(
+            image,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+        )
 
     @classmethod
     def _refine_gate_decision(

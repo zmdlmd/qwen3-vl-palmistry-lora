@@ -15,6 +15,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default=None, help="Runtime device")
     parser.add_argument("--device-map", default="auto", help="Transformers device_map")
     parser.add_argument("--torch-dtype", default="auto", help="auto | bf16 | fp16 | fp32")
+    parser.add_argument("--gate-classifier-path", default=None, help="Optional standalone gate classifier checkpoint path")
+    parser.add_argument("--gate-classifier-device", default=None, help="Standalone gate classifier runtime device")
     parser.add_argument("--max-new-tokens", type=int, default=1200)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
@@ -31,6 +33,8 @@ def main() -> None:
         device=args.device or default_device(),
         device_map=args.device_map,
         torch_dtype=args.torch_dtype,
+        gate_classifier_path=args.gate_classifier_path,
+        gate_classifier_device=args.gate_classifier_device,
     )
 
     result = pipeline.analyze_detailed(
