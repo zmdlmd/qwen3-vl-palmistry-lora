@@ -29,6 +29,13 @@ TEACHER_REQUEST_TIMEOUT="${TEACHER_REQUEST_TIMEOUT:-180}"
 TEACHER_SLEEP_SECONDS="${TEACHER_SLEEP_SECONDS:-0.0}"
 TEACHER_NUM_WORKERS="${TEACHER_NUM_WORKERS:-4}"
 TEACHER_JSON_MODE="${TEACHER_JSON_MODE:-false}"
+JUDGE_MODEL="${JUDGE_MODEL:-}"
+JUDGE_TEMPERATURE="${JUDGE_TEMPERATURE:-0.0}"
+JUDGE_MAX_TOKENS="${JUDGE_MAX_TOKENS:-900}"
+JUDGE_MIN_AVERAGE_SCORE="${JUDGE_MIN_AVERAGE_SCORE:-3.5}"
+JUDGE_MIN_VISUAL_GROUNDING="${JUDGE_MIN_VISUAL_GROUNDING:-3.0}"
+JUDGE_MIN_UNCERTAINTY_HONESTY="${JUDGE_MIN_UNCERTAINTY_HONESTY:-3.0}"
+JUDGE_REJECT_CAUTIOUS="${JUDGE_REJECT_CAUTIOUS:-false}"
 
 if [[ -z "${OPENAI_API_KEY}" ]]; then
   echo "An OpenAI-compatible API key is required. Set OPENAI_API_KEY or DASHSCOPE_API_KEY." >&2
@@ -74,6 +81,20 @@ fi
 
 if [[ "${TEACHER_JSON_MODE}" == "true" ]]; then
   CMD+=(--json-mode)
+fi
+
+if [[ -n "${JUDGE_MODEL}" ]]; then
+  CMD+=(
+    --judge-model "${JUDGE_MODEL}"
+    --judge-temperature "${JUDGE_TEMPERATURE}"
+    --judge-max-tokens "${JUDGE_MAX_TOKENS}"
+    --judge-min-average-score "${JUDGE_MIN_AVERAGE_SCORE}"
+    --judge-min-visual-grounding "${JUDGE_MIN_VISUAL_GROUNDING}"
+    --judge-min-uncertainty-honesty "${JUDGE_MIN_UNCERTAINTY_HONESTY}"
+  )
+  if [[ "${JUDGE_REJECT_CAUTIOUS}" == "true" ]]; then
+    CMD+=(--reject-cautious)
+  fi
 fi
 
 "${CMD[@]}"

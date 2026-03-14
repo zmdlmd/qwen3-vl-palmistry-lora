@@ -216,6 +216,9 @@ By default, the teacher pipeline reads from `/root/autodl-tmp/data/Palmistry.v2i
 The teacher API is OpenAI-compatible. For DashScope, Qwen3.5 multimodal models fit this workflow, while the actual API `model` value can be `qwen-plus` or `qwen-vl-plus`.
 Set `TEACHER_NUM_WORKERS` in the env file to enable concurrent API requests when the provider quota allows it.
 
+The teacher pipeline now also supports an optional `teacher -> judge -> filter` stage.
+If `JUDGE_MODEL` is set, each generated teacher JSON is reviewed against the image and labeled as `accept`, `accept_cautious`, or `reject` before being exported into the final SFT dataset.
+
 ### 3.55. Split SFT Data Into Train / Val
 
 ```bash

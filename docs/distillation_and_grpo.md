@@ -7,8 +7,9 @@ The new teacher-data pipeline automates the step that was previously done manual
 1. Read a manifest of hand images, or scan an image folder directly.
 2. Call an OpenAI-compatible multimodal API.
 3. Validate that the teacher output matches the palmistry JSON schema.
-4. Save the canonical teacher response to JSONL logs.
-5. Export a LLaVA-style SFT dataset for small-model distillation.
+4. Optionally run a judge pass that scores visual grounding, uncertainty honesty, line consistency, and schema quality.
+5. Save the canonical teacher response to JSONL logs.
+6. Export a LLaVA-style SFT dataset for small-model distillation.
 
 Main files:
 
@@ -28,6 +29,7 @@ On AutoDL, the default teacher manifest is `/root/autodl-tmp/data/Palmistry.v2i.
 
 The teacher endpoint only needs to be OpenAI-compatible. For DashScope, the teacher can be a Qwen3.5 multimodal model, while the API `model` value can be `qwen-plus` or `qwen-vl-plus`.
 Use `TEACHER_NUM_WORKERS` or `--num-workers` to increase throughput with concurrent API requests.
+If `JUDGE_MODEL` is configured, the pipeline adds a second pass that labels each teacher sample as `accept`, `accept_cautious`, or `reject`, and filters low-trust samples before SFT export.
 
 Output artifacts:
 

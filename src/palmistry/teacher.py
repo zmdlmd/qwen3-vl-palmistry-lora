@@ -15,7 +15,11 @@ from typing import Any
 
 import requests
 
-from .prompts import DEFAULT_STUDENT_STRUCTURED_PROMPT, build_teacher_structured_prompt
+from .prompts import (
+    DEFAULT_STUDENT_STRUCTURED_PROMPT,
+    build_teacher_judge_prompt,
+    build_teacher_structured_prompt,
+)
 from .schema import (
     OPTIONAL_LINE_NAMES,
     REQUIRED_LINE_FIELDS,
@@ -24,6 +28,7 @@ from .schema import (
     TOP_LEVEL_KEY,
     build_llava_sft_record,
     canonicalize_palmistry_json,
+    extract_json_object,
     load_palmistry_payload,
     validate_palmistry_payload,
 )
@@ -68,6 +73,14 @@ REPORT_UNCERTAINTY_PATTERNS = (
     re.compile(r"不可辨识"),
     re.compile(r"不清晰"),
 )
+JUDGE_TOP_LEVEL_KEY = "teacher_judgment"
+JUDGE_DECISIONS = ("accept", "accept_cautious", "reject")
+JUDGE_SCORE_FIELDS = (
+    "visual_grounding",
+    "uncertainty_honesty",
+    "line_consistency",
+    "schema_quality",
+)
 _THREAD_LOCAL = threading.local()
 
 
@@ -102,6 +115,14 @@ class TeacherGenerationConfig:
     filter_low_quality: bool = True
     max_uncertain_main_lines: int = 1
     num_workers: int = default_num_workers()
+    judge_model: str | None = None
+    judge_prompt: str = build_teacher_judge_prompt()
+    judge_temperature: float = 0.0
+    judge_max_tokens: int = 900
+    judge_min_average_score: float = 3.5
+    judge_min_visual_grounding: float = 3.0
+    judge_min_uncertainty_honesty: float = 3.0
+    allow_cautious_accept: bool = True
 
 
 @dataclass(frozen=True)
@@ -122,6 +143,7 @@ class TeacherTaskResult:
     generated: int = 0
     failed: int = 0
     filtered: int = 0
+    judge_decision: str | None = None
 
 
 def _load_manifest(manifest_path: Path) -> list[dict[str, Any]]:
@@ -262,7 +284,12 @@ def call_openai_compatible_api(
     return extract_message_text(response_payload)
 
 
-def _load_success_map(jsonl_path: Path) -> dict[str, dict[str, Any]]:
+def _load_success_map(
+    jsonl_path: Path,
+    *,
+    judge_model: str | None,
+    allow_cautious_accept: bool,
+) -> dict[str, dict[str, Any]]:
     success_map: dict[str, dict[str, Any]] = {}
     if not jsonl_path.exists():
         return success_map
@@ -271,8 +298,17 @@ def _load_success_map(jsonl_path: Path) -> dict[str, dict[str, Any]]:
         if not line.strip():
             continue
         record = json.loads(line)
-        if record.get("status") == "ok" and record.get("id"):
-            success_map[record["id"]] = record
+        if record.get("status") != "ok" or not record.get("id"):
+            continue
+        if judge_model:
+            if record.get("judge_model") != judge_model:
+                continue
+            decision = record.get("judge_decision")
+            if decision not in {"accept", "accept_cautious"}:
+                continue
+            if decision == "accept_cautious" and not allow_cautious_accept:
+                continue
+        success_map[record["id"]] = record
     return success_map
 
 
@@ -369,6 +405,90 @@ def evaluate_palmistry_quality(payload: dict[str, Any], *, max_uncertain_main_li
     return issues
 
 
+def _build_teacher_judge_request_prompt(candidate_json: str, judge_prompt: str) -> str:
+    return f"{judge_prompt}\n\n候选结构化JSON：\n{candidate_json}"
+
+
+def _coerce_judge_score(value: Any) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid judge score: {value!r}") from exc
+    if score < 0 or score > 5:
+        raise ValueError(f"Judge score out of range [0, 5]: {score}")
+    return score
+
+
+def load_teacher_judge_payload(text: str) -> dict[str, Any]:
+    payload = json.loads(extract_json_object(text))
+    if not isinstance(payload, dict):
+        raise ValueError("Teacher judge payload must be a JSON object.")
+    return payload
+
+
+def validate_teacher_judge_payload(payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    judgment = payload.get(JUDGE_TOP_LEVEL_KEY)
+    if not isinstance(judgment, dict):
+        return [f"Missing object: {JUDGE_TOP_LEVEL_KEY}"]
+
+    decision = judgment.get("decision")
+    if decision not in JUDGE_DECISIONS:
+        errors.append(f"Invalid decision: {decision!r}")
+
+    for field_name in JUDGE_SCORE_FIELDS:
+        try:
+            _coerce_judge_score(judgment.get(field_name))
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    reason = judgment.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        errors.append("Missing or empty field: teacher_judgment.reason")
+
+    return errors
+
+
+def normalize_teacher_judge_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    judgment = payload[JUDGE_TOP_LEVEL_KEY]
+    normalized = {
+        "decision": str(judgment["decision"]).strip(),
+        "reason": str(judgment["reason"]).strip(),
+    }
+    for field_name in JUDGE_SCORE_FIELDS:
+        normalized[field_name] = _coerce_judge_score(judgment[field_name])
+    normalized["average_score"] = sum(normalized[field_name] for field_name in JUDGE_SCORE_FIELDS) / len(JUDGE_SCORE_FIELDS)
+    return {JUDGE_TOP_LEVEL_KEY: normalized}
+
+
+def evaluate_teacher_judgment(
+    payload: dict[str, Any],
+    *,
+    min_average_score: float,
+    min_visual_grounding: float,
+    min_uncertainty_honesty: float,
+    allow_cautious_accept: bool,
+) -> tuple[str, list[str], dict[str, Any]]:
+    normalized = normalize_teacher_judge_payload(payload)
+    judgment = normalized[JUDGE_TOP_LEVEL_KEY]
+    decision = str(judgment["decision"])
+    issues: list[str] = []
+
+    if judgment["average_score"] < min_average_score:
+        issues.append(f"judge_average_below_threshold:{judgment['average_score']:.2f}")
+    if judgment["visual_grounding"] < min_visual_grounding:
+        issues.append(f"judge_visual_grounding_below_threshold:{judgment['visual_grounding']:.2f}")
+    if judgment["uncertainty_honesty"] < min_uncertainty_honesty:
+        issues.append(f"judge_uncertainty_honesty_below_threshold:{judgment['uncertainty_honesty']:.2f}")
+    if decision == "reject":
+        issues.append("judge_decision:reject")
+    if decision == "accept_cautious" and not allow_cautious_accept:
+        issues.append("judge_decision:accept_cautious_not_allowed")
+
+    final_decision = "reject" if issues else decision
+    return final_decision, issues, normalized
+
+
 def _process_teacher_record(context: TeacherTaskContext, config: TeacherGenerationConfig) -> TeacherTaskResult:
     result = TeacherTaskResult(index=context.index)
 
@@ -398,7 +518,12 @@ def _process_teacher_record(context: TeacherTaskContext, config: TeacherGenerati
                 if config.filter_low_quality
                 else []
             )
+            judge_payload: dict[str, Any] | None = None
+            judge_issues: list[str] = []
+            judge_decision: str | None = None
+
             if quality_issues:
+                filtered_issues = sanitation_issues + quality_issues + judge_issues
                 result.log_records.append(
                     {
                         "id": context.record_id,
@@ -409,11 +534,64 @@ def _process_teacher_record(context: TeacherTaskContext, config: TeacherGenerati
                         "teacher_model": config.model,
                         "attempt": attempt,
                         "status": "filtered",
-                        "quality_issues": sanitation_issues + quality_issues,
+                        "quality_issues": filtered_issues,
+                        "judge_model": config.judge_model,
+                        "judge_decision": judge_decision,
+                        "judge": judge_payload,
                     }
                 )
                 if attempt == config.max_retries:
                     result.filtered = 1
+                    result.judge_decision = judge_decision
+                    _sleep_if_configured(config)
+                    return result
+                _sleep_if_configured(config)
+                continue
+
+            if config.judge_model:
+                judge_raw_text = call_openai_compatible_api(
+                    api_base=config.api_base,
+                    api_key=config.api_key,
+                    model=config.judge_model,
+                    prompt=_build_teacher_judge_request_prompt(canonical_text, config.judge_prompt),
+                    image_path=context.image_path,
+                    temperature=config.judge_temperature,
+                    max_tokens=config.judge_max_tokens,
+                    request_timeout=config.request_timeout,
+                    json_mode=config.json_mode,
+                )
+                judge_payload = load_teacher_judge_payload(judge_raw_text)
+                judge_errors = validate_teacher_judge_payload(judge_payload)
+                if judge_errors:
+                    raise ValueError("; ".join(judge_errors[:5]))
+                judge_decision, judge_issues, judge_payload = evaluate_teacher_judgment(
+                    judge_payload,
+                    min_average_score=config.judge_min_average_score,
+                    min_visual_grounding=config.judge_min_visual_grounding,
+                    min_uncertainty_honesty=config.judge_min_uncertainty_honesty,
+                    allow_cautious_accept=config.allow_cautious_accept,
+                )
+
+            if judge_issues:
+                result.log_records.append(
+                    {
+                        "id": context.record_id,
+                        "image": context.image_value,
+                        "student_prompt": context.student_prompt,
+                        "teacher_prompt": context.teacher_prompt,
+                        "assistant": canonical_text,
+                        "teacher_model": config.model,
+                        "attempt": attempt,
+                        "status": "filtered",
+                        "quality_issues": sanitation_issues + judge_issues,
+                        "judge_model": config.judge_model,
+                        "judge_decision": judge_decision,
+                        "judge": judge_payload,
+                    }
+                )
+                if attempt == config.max_retries:
+                    result.filtered = 1
+                    result.judge_decision = judge_decision
                     _sleep_if_configured(config)
                     return result
                 _sleep_if_configured(config)
@@ -430,6 +608,10 @@ def _process_teacher_record(context: TeacherTaskContext, config: TeacherGenerati
             }
             if sanitation_issues:
                 log_record["sanitation_issues"] = sanitation_issues
+            if judge_payload is not None:
+                log_record["judge_model"] = config.judge_model
+                log_record["judge"] = judge_payload
+                log_record["judge_decision"] = judge_decision
             result.log_records.append(log_record)
             result.llava_record = build_llava_sft_record(
                 context.record_id,
@@ -438,6 +620,7 @@ def _process_teacher_record(context: TeacherTaskContext, config: TeacherGenerati
                 student_prompt=context.student_prompt,
             )
             result.generated = 1
+            result.judge_decision = judge_decision
             _sleep_if_configured(config)
             return result
         except Exception as exc:
@@ -463,7 +646,15 @@ def _process_teacher_record(context: TeacherTaskContext, config: TeacherGenerati
 
 def generate_sft_dataset(config: TeacherGenerationConfig) -> dict[str, Any]:
     records = load_teacher_records(config.manifest_path, config.image_dir, config.limit)
-    success_map = _load_success_map(config.output_jsonl) if config.resume and config.output_jsonl else {}
+    success_map = (
+        _load_success_map(
+            config.output_jsonl,
+            judge_model=config.judge_model,
+            allow_cautious_accept=config.allow_cautious_accept,
+        )
+        if config.resume and config.output_jsonl
+        else {}
+    )
 
     llava_records: list[dict[str, Any] | None] = [None] * len(records)
     pending_contexts: list[TeacherTaskContext] = []
@@ -471,6 +662,7 @@ def generate_sft_dataset(config: TeacherGenerationConfig) -> dict[str, Any]:
     skipped = 0
     failed = 0
     filtered = 0
+    judge_decision_counts: Counter[str] = Counter()
 
     for index, record in enumerate(records):
         record_id = str(record.get("id") or Path(record["image"]).stem)
@@ -535,6 +727,8 @@ def generate_sft_dataset(config: TeacherGenerationConfig) -> dict[str, Any]:
                 generated += result.generated
                 failed += result.failed
                 filtered += result.filtered
+                if result.judge_decision:
+                    judge_decision_counts[result.judge_decision] += 1
 
     config.output_json.parent.mkdir(parents=True, exist_ok=True)
     config.output_json.write_text(
@@ -549,6 +743,8 @@ def generate_sft_dataset(config: TeacherGenerationConfig) -> dict[str, Any]:
         "failed": failed,
         "filtered": filtered,
         "num_workers": max(1, config.num_workers),
+        "judge_model": config.judge_model,
+        "judge_decision_counts": dict(judge_decision_counts),
         "output_json": str(config.output_json),
         "output_jsonl": str(config.output_jsonl) if config.output_jsonl else None,
     }

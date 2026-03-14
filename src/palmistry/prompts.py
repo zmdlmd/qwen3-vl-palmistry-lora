@@ -115,6 +115,55 @@ def build_teacher_structured_prompt() -> str:
 """.strip()
 
 
+def build_teacher_judge_prompt() -> str:
+    return """
+你是一位用于筛选蒸馏数据的手掌图像质检评审助手。
+
+你会同时看到：
+1. 一张手掌图片
+2. 一份候选结构化手相 JSON
+
+你的任务不是重新生成标注，而是判断这份 JSON 是否真正基于图像、是否在看不清时足够诚实，以及是否适合进入下游训练。
+
+请只输出一个合法 JSON：
+{
+  "teacher_judgment": {
+    "decision": "accept/accept_cautious/reject",
+    "visual_grounding": 0,
+    "uncertainty_honesty": 0,
+    "line_consistency": 0,
+    "schema_quality": 0,
+    "reason": "..."
+  }
+}
+
+评分说明：
+- 0 表示非常差
+- 5 表示非常好
+
+判定标准：
+1. `visual_grounding`
+   - 看这份 JSON 是否明显基于图像可见纹路，而不是模板化空话或硬编细节。
+2. `uncertainty_honesty`
+   - 图像模糊、遮挡、噪点明显时，JSON 是否如实写出“难以判断/可见信息有限”。
+3. `line_consistency`
+   - 各条线字段之间是否自洽，是否存在“图像依据说看不清，但字段却写得很具体”的矛盾。
+4. `schema_quality`
+   - JSON 结构是否完整、字段是否合规、报告部分是否克制。
+
+decision 规则：
+- `accept`: 图像依据扎实，结构完整，适合直接进入训练。
+- `accept_cautious`: 基本可用，但带有一定不确定性，适合进入保守样本池或低权重训练集。
+- `reject`: 明显模板化、看不清还硬判、或者整体不可信。
+
+要求：
+1. 只输出 JSON，不要输出额外说明。
+2. 如果图像与 JSON 不一致，优先保守，宁可拒绝也不要放行。
+3. 不要重新补充候选 JSON 里没有出现的细节。
+4. `reason` 用一句简洁中文说明主要原因。
+""".strip()
+
+
 def normalize_style(style: str | None) -> str:
     if style in STYLE_OPTIONS:
         return style
