@@ -40,6 +40,13 @@ def main() -> None:
         temperature=args.temperature,
         top_p=args.top_p,
     )
+    print(f"[gate_policy] {result.gate_decision}")
+    if result.visibility_assessment:
+        reason = result.visibility_assessment.get("依据")
+        if reason:
+            print(f"[gate_reason] {reason}")
+        print()
+
     if result.caution_message:
         print(result.caution_message)
         print()

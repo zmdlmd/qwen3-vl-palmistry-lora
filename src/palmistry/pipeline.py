@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +11,13 @@ from transformers import AutoProcessor
 from transformers.models.qwen3_vl import Qwen3VLForConditionalGeneration
 
 from .config import default_device, env_or_default, resolve_torch_dtype
+from .gate_policy import (
+    GATE_DECISION_CAUTIOUS,
+    GATE_DECISION_CONTINUE,
+    GATE_DECISION_RETAKE,
+    GatePolicyDecision,
+    parse_gate_policy_payload,
+)
 from .prompts import (
     DEFAULT_STUDENT_STRUCTURED_PROMPT,
     build_visibility_guard_prompt,
@@ -21,7 +27,6 @@ from .prompts import (
 from .schema import (
     REQUIRED_LINE_NAMES,
     canonicalize_palmistry_json,
-    extract_json_object,
     load_palmistry_payload,
     validate_palmistry_payload,
 )
@@ -51,8 +56,10 @@ class PalmistryAnalysisResult:
     report: str
     low_confidence: bool
     uncertain_main_lines: int
+    gate_decision: str = GATE_DECISION_RETAKE
     uncertain_lines: list[str] = field(default_factory=list)
     caution_message: str = ""
+    gate_policy: dict[str, Any] | None = None
     structured_payload: dict[str, Any] | None = None
     visibility_assessment: dict[str, Any] | None = None
     sanitation_issues: list[str] = field(default_factory=list)
@@ -196,14 +203,8 @@ class PalmistryPipeline:
         ]
 
     @staticmethod
-    def _parse_visibility_payload(text: str) -> dict[str, Any]:
-        payload = json.loads(extract_json_object(text))
-        if not isinstance(payload, dict):
-            raise ValueError("Visibility payload must be a JSON object.")
-        assessment = payload.get("visibility_assessment")
-        if not isinstance(assessment, dict):
-            raise ValueError("Missing visibility_assessment object.")
-        return assessment
+    def _extract_gate_decision(assessment: dict[str, Any]) -> str:
+        return str(assessment.get("decision", "")).strip() or str(assessment.get("建议", "")).strip()
 
     @staticmethod
     def _visible_line_count(assessment: dict[str, Any]) -> int:
@@ -215,12 +216,12 @@ class PalmistryPipeline:
 
     @classmethod
     def _visibility_is_cautious(cls, assessment: dict[str, Any]) -> bool:
-        suggestion = str(assessment.get("建议", "")).strip()
+        suggestion = cls._extract_gate_decision(assessment)
         clarity = str(assessment.get("整体清晰度", "")).strip()
         occlusion = str(assessment.get("遮挡或噪点", "")).strip()
         visible_lines = cls._visible_line_count(assessment)
 
-        if suggestion == "谨慎分析":
+        if suggestion in {GATE_DECISION_CAUTIOUS, "谨慎分析"}:
             return True
         if clarity == "一般":
             return True
@@ -232,12 +233,12 @@ class PalmistryPipeline:
 
     @classmethod
     def _visibility_requires_retake(cls, assessment: dict[str, Any]) -> bool:
-        suggestion = str(assessment.get("建议", "")).strip()
+        suggestion = cls._extract_gate_decision(assessment)
         clarity = str(assessment.get("整体清晰度", "")).strip()
         occlusion = str(assessment.get("遮挡或噪点", "")).strip()
         visible_lines = cls._visible_line_count(assessment)
 
-        if suggestion == "建议重拍":
+        if suggestion in {GATE_DECISION_RETAKE, "建议重拍"}:
             return True
         if clarity == "模糊":
             return True
@@ -278,13 +279,66 @@ class PalmistryPipeline:
         temperature: float = 0.1,
         top_p: float = 0.9,
     ) -> dict[str, Any]:
+        return self.assess_gate_policy(
+            image,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+        ).to_visibility_assessment()
+
+    def assess_gate_policy(
+        self,
+        image: str | Path | Any,
+        *,
+        max_new_tokens: int = 260,
+        temperature: float = 0.1,
+        top_p: float = 0.9,
+    ) -> GatePolicyDecision:
         raw_output = self._generate(
             self._visibility_messages(image),
             max_new_tokens=max_new_tokens,
             temperature=temperature,
             top_p=top_p,
         )
-        return self._parse_visibility_payload(raw_output)
+        return parse_gate_policy_payload(raw_output)
+
+    @classmethod
+    def _refine_gate_decision(
+        cls,
+        *,
+        initial_gate_decision: str,
+        visibility_assessment: dict[str, Any] | None,
+        uncertain_main_line_count: int,
+        uncertain_line_count: int,
+    ) -> str:
+        if initial_gate_decision == GATE_DECISION_RETAKE:
+            return GATE_DECISION_RETAKE
+        if uncertain_main_line_count >= 2:
+            return GATE_DECISION_CAUTIOUS
+        if initial_gate_decision == GATE_DECISION_CAUTIOUS:
+            return GATE_DECISION_CAUTIOUS
+        if cls._should_force_low_confidence(
+            visibility_assessment,
+            uncertain_main_line_count,
+            uncertain_line_count,
+        ):
+            return GATE_DECISION_CAUTIOUS
+        return GATE_DECISION_CONTINUE
+
+    @staticmethod
+    def _build_gate_caution_message(uncertain_lines: list[str]) -> str:
+        if uncertain_lines:
+            return (
+                "当前照片已进入“谨慎分析”路径：可以做保守掌纹观察，但不适合输出强结论的完整手相报告。"
+                f" 可见信息有限的线条包括：{'、'.join(uncertain_lines)}。"
+                "如需更稳定结果，建议在自然光下重拍更清晰的掌心照片。"
+                " 手相仅供参考，请以生活实际为准。"
+            )
+        return (
+            "当前照片已进入“谨慎分析”路径：可以做保守掌纹观察，但不适合输出强结论的完整手相报告。"
+            " 如需更稳定结果，建议在自然光下重拍更清晰的掌心照片。"
+            " 手相仅供参考，请以生活实际为准。"
+        )
 
     def analyze_structured(
         self,
@@ -386,11 +440,12 @@ class PalmistryPipeline:
         structured_max_new_tokens: int = 1400,
     ) -> PalmistryAnalysisResult:
         try:
-            visibility_assessment = self.assess_visibility(
+            gate_policy = self.assess_gate_policy(
                 image,
                 temperature=min(temperature, 0.2),
                 top_p=top_p,
             )
+            visibility_assessment = gate_policy.to_visibility_assessment()
         except Exception as exc:
             message = self._build_retake_message([], error=str(exc))
             return PalmistryAnalysisResult(
@@ -399,13 +454,15 @@ class PalmistryPipeline:
                 report=message,
                 low_confidence=True,
                 uncertain_main_lines=len(REQUIRED_LINE_NAMES),
+                gate_decision=GATE_DECISION_RETAKE,
                 uncertain_lines=list(REQUIRED_LINE_NAMES),
                 caution_message=message,
+                gate_policy=None,
                 visibility_assessment=None,
                 error=str(exc),
             )
 
-        if self._visibility_requires_retake(visibility_assessment):
+        if gate_policy.decision == GATE_DECISION_RETAKE:
             reason = str(visibility_assessment.get("依据", "")).strip()
             message = (
                 "这张照片的掌纹可见性不足，继续生成完整手相报告容易出现过度解读。"
@@ -418,8 +475,10 @@ class PalmistryPipeline:
                 report=message,
                 low_confidence=True,
                 uncertain_main_lines=len(REQUIRED_LINE_NAMES),
+                gate_decision=GATE_DECISION_RETAKE,
                 uncertain_lines=list(REQUIRED_LINE_NAMES),
                 caution_message=message,
+                gate_policy=visibility_assessment,
                 visibility_assessment=visibility_assessment,
             )
 
@@ -438,27 +497,35 @@ class PalmistryPipeline:
                 report=message,
                 low_confidence=True,
                 uncertain_main_lines=len(REQUIRED_LINE_NAMES),
+                gate_decision=GATE_DECISION_RETAKE,
                 uncertain_lines=list(REQUIRED_LINE_NAMES),
                 caution_message=message,
+                gate_policy=visibility_assessment,
                 visibility_assessment=visibility_assessment,
                 error=str(exc),
             )
 
+        result.gate_policy = visibility_assessment
         result.visibility_assessment = visibility_assessment
-        forced_low_confidence = self._should_force_low_confidence(
-            visibility_assessment,
-            result.uncertain_main_lines,
-            len(result.uncertain_lines),
+        result.gate_decision = self._refine_gate_decision(
+            initial_gate_decision=gate_policy.decision,
+            visibility_assessment=visibility_assessment,
+            uncertain_main_line_count=result.uncertain_main_lines,
+            uncertain_line_count=len(result.uncertain_lines),
         )
-        if forced_low_confidence and not result.low_confidence:
-            uncertain_main_lines, _ = self._collect_uncertain_lines(result.structured_payload or {})
-            result.low_confidence = True
-            result.uncertain_main_lines = max(1, len(uncertain_main_lines))
-            result.caution_message = self._build_retake_message(
-                uncertain_main_lines or list(REQUIRED_LINE_NAMES[:1]),
-            )
+        result.low_confidence = result.gate_decision != GATE_DECISION_CONTINUE
 
-        if result.low_confidence:
+        if result.gate_decision == GATE_DECISION_CAUTIOUS:
+            result.caution_message = self._build_gate_caution_message(result.uncertain_lines)
+            result.report = result.caution_message
+            return result
+
+        if result.gate_decision == GATE_DECISION_RETAKE or result.low_confidence:
+            if not result.caution_message:
+                uncertain_main_lines, _ = self._collect_uncertain_lines(result.structured_payload or {})
+                result.caution_message = self._build_retake_message(
+                    uncertain_main_lines or list(REQUIRED_LINE_NAMES[:1]),
+                )
             result.report = result.caution_message
             return result
 

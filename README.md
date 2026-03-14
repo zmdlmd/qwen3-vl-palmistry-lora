@@ -239,6 +239,7 @@ Main entrypoints:
 
 - [tools/generate_teacher_dataset.py](tools/generate_teacher_dataset.py)
 - [tools/split_sft_dataset.py](tools/split_sft_dataset.py)
+- [tools/build_gate_policy_dataset.py](tools/build_gate_policy_dataset.py)
 - [scripts/palmistry/generate_teacher_data.sh](scripts/palmistry/generate_teacher_data.sh)
 - [docs/distillation_and_grpo.md](docs/distillation_and_grpo.md)
 
@@ -250,6 +251,22 @@ bash scripts/palmistry/prepare_report_grpo_dataset.sh configs/palmistry/report_g
 ```
 
 This converts the structured teacher dataset into a GRPO dataset whose prompt asks for a natural Chinese report, while keeping the original structured JSON as the reward reference.
+
+### 3.65. Build A Three-Class Gate-Policy Dataset
+
+```bash
+python -m tools.build_gate_policy_dataset \
+  --structured-json ./artifacts/palmistry_llava.generated.clean.qwen3_5_plus.json \
+  --hard-manifest /root/autodl-tmp/data/Palmistry.v2i.coco/manifests/teacher_train.hard_cases.jsonl \
+  --output-jsonl ./artifacts/palmistry_gate_policy.jsonl \
+  --output-summary ./artifacts/palmistry_gate_policy.summary.json
+```
+
+The current inference stack now uses an independent three-class gate policy:
+
+- `continue`: normal analysis
+- `cautious`: conservative structured-only analysis
+- `retake`: suggest the user reshoot the image
 
 ### 4. Run CLI Inference
 

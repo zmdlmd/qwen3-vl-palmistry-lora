@@ -140,7 +140,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
-    def format_status_html(low_confidence, caution_message, visibility_assessment):
+    def format_status_html(gate_decision, caution_message, visibility_assessment):
         if visibility_assessment is None:
             return """
             <div id="status-shell" class="status-wait">
@@ -150,11 +150,16 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
             </div>
             """.strip()
 
-        if low_confidence:
+        if gate_decision == "retake":
             badge = "建议重拍"
             status_class = "status-retake"
             badge_class = "badge-retake"
             title = "当前照片不适合继续做完整手相解读"
+        elif gate_decision == "cautious":
+            badge = "谨慎分析"
+            status_class = "status-ready"
+            badge_class = "badge-wait"
+            title = "当前照片只适合保守掌纹观察"
         else:
             badge = "可继续分析"
             status_class = "status-ready"
@@ -179,7 +184,7 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         if image is None:
             message = "请先上传清晰的手掌照片。"
             return (
-                format_status_html(False, "", None),
+                format_status_html("continue", "", None),
                 message,
                 "",
                 "",
@@ -190,9 +195,9 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
             )
 
         result = pipeline.analyze_detailed(image, style=style)
-        report_state = "" if result.low_confidence else result.report
+        report_state = "" if result.gate_decision != "continue" else result.report
         return (
-            format_status_html(result.low_confidence, result.caution_message, result.visibility_assessment),
+            format_status_html(result.gate_decision, result.caution_message, result.visibility_assessment),
             result.report,
             result.caution_message,
             result.structured_json,
@@ -216,7 +221,7 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         return updated_history, updated_history, ""
 
     def clear_all():
-        return None, "balanced", format_status_html(False, "", None), "", "", "", "", "", [], [], ""
+        return None, "balanced", format_status_html("continue", "", None), "", "", "", "", "", [], [], ""
 
     with gr.Blocks(css=CSS, title="Palmistry LoRA Demo") as demo:
         report_state = gr.State("")

@@ -14,6 +14,7 @@ The new teacher-data pipeline automates the step that was previously done manual
 Main files:
 
 - [tools/generate_teacher_dataset.py](../tools/generate_teacher_dataset.py)
+- [tools/build_gate_policy_dataset.py](../tools/build_gate_policy_dataset.py)
 - [src/palmistry/teacher.py](../src/palmistry/teacher.py)
 - [src/palmistry/schema.py](../src/palmistry/schema.py)
 - [scripts/palmistry/generate_teacher_data.sh](../scripts/palmistry/generate_teacher_data.sh)
@@ -53,6 +54,14 @@ That makes it much easier to iterate on:
 - better filtering rules
 
 Before running SFT, split the generated dataset with [tools/split_sft_dataset.py](../tools/split_sft_dataset.py). It keeps augmented variants from the same source palm image in the same split, so `eval_path` reflects real generalization instead of leakage from near-duplicate samples.
+
+The project now also includes a separate three-class gate-policy path:
+
+- `continue`
+- `cautious`
+- `retake`
+
+Use [tools/build_gate_policy_dataset.py](../tools/build_gate_policy_dataset.py) to bootstrap pseudo-labeled gate-policy data from the structured teacher dataset plus hard-case manifests.
 
 ## 3. GRPO For Palmistry
 

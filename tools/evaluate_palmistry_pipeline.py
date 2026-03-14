@@ -107,6 +107,10 @@ def safe_mean(values: list[float]) -> float:
     return float(statistics.fmean(values)) if values else 0.0
 
 
+def count_gate_decision(counts: Counter[str], decision: str) -> None:
+    counts[f"gate_{decision}"] += 1
+
+
 def count_uncertain_main_lines(payload: dict[str, Any]) -> int:
     analysis = payload.get("palmistry_analysis", {})
     lines = analysis.get("lines", {})
@@ -158,6 +162,9 @@ def summarize_val(
         "low_confidence_rate": counts["low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
         "expected_low_confidence_rate": counts["expected_low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
         "gate_match_rate": counts["gate_match"] / counts["samples"] if counts["samples"] else 0.0,
+        "gate_continue_rate": counts["gate_continue"] / counts["samples"] if counts["samples"] else 0.0,
+        "gate_cautious_rate": counts["gate_cautious"] / counts["samples"] if counts["samples"] else 0.0,
+        "gate_retake_rate": counts["gate_retake"] / counts["samples"] if counts["samples"] else 0.0,
         "visibility_cautious_rate": counts["visibility_cautious"] / counts["samples"] if counts["samples"] else 0.0,
         "visibility_retake_rate": counts["visibility_retake"] / counts["samples"] if counts["samples"] else 0.0,
         "structured_available_rate": counts["structured_available"] / counts["samples"] if counts["samples"] else 0.0,
@@ -171,6 +178,9 @@ def summarize_hard(counts: Counter[str], by_reason: dict[str, Counter[str]]) -> 
     return {
         "num_samples": counts["samples"],
         "low_confidence_rate": counts["low_confidence"] / counts["samples"] if counts["samples"] else 0.0,
+        "gate_continue_rate": counts["gate_continue"] / counts["samples"] if counts["samples"] else 0.0,
+        "gate_cautious_rate": counts["gate_cautious"] / counts["samples"] if counts["samples"] else 0.0,
+        "gate_retake_rate": counts["gate_retake"] / counts["samples"] if counts["samples"] else 0.0,
         "visibility_cautious_rate": counts["visibility_cautious"] / counts["samples"] if counts["samples"] else 0.0,
         "full_report_rate": counts["full_report_generated"] / counts["samples"] if counts["samples"] else 0.0,
         "visibility_retake_rate": counts["visibility_retake"] / counts["samples"] if counts["samples"] else 0.0,
@@ -178,6 +188,9 @@ def summarize_hard(counts: Counter[str], by_reason: dict[str, Counter[str]]) -> 
             reason: {
                 "samples": counter["samples"],
                 "low_confidence_rate": counter["low_confidence"] / counter["samples"] if counter["samples"] else 0.0,
+                "gate_continue_rate": counter["gate_continue"] / counter["samples"] if counter["samples"] else 0.0,
+                "gate_cautious_rate": counter["gate_cautious"] / counter["samples"] if counter["samples"] else 0.0,
+                "gate_retake_rate": counter["gate_retake"] / counter["samples"] if counter["samples"] else 0.0,
                 "visibility_cautious_rate": counter["visibility_cautious"] / counter["samples"] if counter["samples"] else 0.0,
                 "full_report_rate": counter["full_report_generated"] / counter["samples"] if counter["samples"] else 0.0,
                 "visibility_retake_rate": counter["visibility_retake"] / counter["samples"] if counter["samples"] else 0.0,
@@ -234,11 +247,12 @@ def evaluate_visibility_only(
     top_p: float,
     ) -> dict[str, Any]:
     try:
-        visibility_assessment = pipeline.assess_visibility(
+        gate_policy = pipeline.assess_gate_policy(
             image_path,
             temperature=min(temperature, 0.2),
             top_p=top_p,
         )
+        visibility_assessment = gate_policy.to_visibility_assessment()
         visibility_cautious = bool(
             visibility_assessment and pipeline._visibility_is_cautious(visibility_assessment)
         )
@@ -261,6 +275,7 @@ def evaluate_visibility_only(
             )
         return {
             "pred_low_confidence": visibility_retake or visibility_cautious,
+            "pred_gate_decision": gate_policy.decision,
             "pred_uncertain_main_lines": len(REQUIRED_LINE_NAMES) if visibility_retake else int(visibility_cautious),
             "pred_uncertain_lines": list(REQUIRED_LINE_NAMES) if visibility_retake else ([] if not visibility_cautious else ["主要掌纹"]),
             "visibility_assessment": visibility_assessment,
@@ -274,6 +289,7 @@ def evaluate_visibility_only(
         message = pipeline._build_retake_message([], error=str(exc))
         return {
             "pred_low_confidence": True,
+            "pred_gate_decision": "retake",
             "pred_uncertain_main_lines": len(REQUIRED_LINE_NAMES),
             "pred_uncertain_lines": list(REQUIRED_LINE_NAMES),
             "visibility_assessment": None,
@@ -328,6 +344,7 @@ def evaluate_val_split(
             "expected_low_confidence": expected_low_confidence,
             "expected_uncertain_main_lines": expected_uncertain_main_lines,
             "pred_low_confidence": result.low_confidence,
+            "pred_gate_decision": result.gate_decision,
             "pred_uncertain_main_lines": result.uncertain_main_lines,
             "pred_uncertain_lines": result.uncertain_lines,
             "visibility_assessment": result.visibility_assessment,
@@ -348,6 +365,7 @@ def evaluate_val_split(
         counts["low_confidence"] += int(result.low_confidence)
         counts["expected_low_confidence"] += int(expected_low_confidence)
         counts["gate_match"] += int(result.low_confidence == expected_low_confidence)
+        count_gate_decision(counts, result.gate_decision)
         counts["visibility_cautious"] += int(visibility_cautious)
         counts["visibility_retake"] += int(visibility_retake)
         counts["full_report_generated"] += int(full_report_generated)
@@ -452,6 +470,7 @@ def evaluate_hard_cases(
 
         counts["samples"] += 1
         counts["low_confidence"] += int(result_row["pred_low_confidence"])
+        count_gate_decision(counts, result_row["pred_gate_decision"])
         counts["visibility_cautious"] += int(result_row["visibility_cautious"])
         counts["full_report_generated"] += int(result_row["full_report_generated"])
         counts["visibility_retake"] += int(result_row["visibility_retake"])
@@ -459,6 +478,7 @@ def evaluate_hard_cases(
         for reason in reject_reasons or ["__none__"]:
             by_reason[reason]["samples"] += 1
             by_reason[reason]["low_confidence"] += int(result_row["pred_low_confidence"])
+            count_gate_decision(by_reason[reason], result_row["pred_gate_decision"])
             by_reason[reason]["visibility_cautious"] += int(result_row["visibility_cautious"])
             by_reason[reason]["full_report_generated"] += int(result_row["full_report_generated"])
             by_reason[reason]["visibility_retake"] += int(result_row["visibility_retake"])
