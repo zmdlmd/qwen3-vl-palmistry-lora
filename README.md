@@ -36,6 +36,20 @@
 - 经分层门控校准后，`val` 集 `structured_available_rate = 0.96`，`full_report_rate = 0.44`
 - `hard_cases` 集 `low_confidence_rate = 0.80`，`full_report_rate = 0.0`，说明困难样本已能以谨慎分析或重拍提示为主
 
+## Strict V2 Snapshot
+
+- 基于 `teacher -> judge -> filter` 重新收口得到 `3906` 条 strict `judged_v2` 样本
+- 按严格三阶段切分得到：
+  - `sft_train = 2344`
+  - `grpo_train = 976`
+  - `eval_holdout = 586`
+- strict `SFT v2` 在 holdout 上达到：
+  - `gate_match_rate = 0.7235`
+  - `structured_available_rate = 0.8959`
+  - `report uncertainty_honesty = 0.7390`
+- strict `GRPO v2` 进一步把 `report uncertainty_honesty` 提升到 `0.7710`
+  - 但 `report reference_alignment` 从 `0.4238` 小幅下降到 `0.4111`
+
 ## English Overview
 
 This repository adapts the upstream `Qwen-VL-Series-Finetune` framework into a palmistry-focused multimodal fine-tuning project.
@@ -58,6 +72,8 @@ The current pipeline is:
 ## Experiment Notes
 
 - Iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
+- Strict SFT v2 training: [docs/sft_strict_v2_training.md](docs/sft_strict_v2_training.md)
+- Strict SFT v2 vs strict GRPO v2 holdout: [docs/strict_sft_v2_vs_strict_grpo_v2_holdout.md](docs/strict_sft_v2_vs_strict_grpo_v2_holdout.md)
 - Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
 - Uncertainty honesty optimization plan: [docs/uncertainty_honesty_plan.md](docs/uncertainty_honesty_plan.md)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
@@ -106,6 +122,8 @@ This repository now supports two complementary stages beyond basic SFT:
 - Adapter export tool: [tools/export_peft_adapter.py](tools/export_peft_adapter.py)
 - Experiment iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
 - Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
+- Strict SFT v2 training: [docs/sft_strict_v2_training.md](docs/sft_strict_v2_training.md)
+- Strict SFT v2 vs strict GRPO v2 holdout: [docs/strict_sft_v2_vs_strict_grpo_v2_holdout.md](docs/strict_sft_v2_vs_strict_grpo_v2_holdout.md)
 - Uncertainty honesty optimization plan: [docs/uncertainty_honesty_plan.md](docs/uncertainty_honesty_plan.md)
 - Gate classifier training notes: [docs/gate_classifier_training.md](docs/gate_classifier_training.md)
 - Gate classifier vs generative gate: [docs/gate_classifier_vs_generative_gate.md](docs/gate_classifier_vs_generative_gate.md)
@@ -133,6 +151,8 @@ This repository now supports two complementary stages beyond basic SFT:
 │   └── examples/
 ├── docs/
 │   ├── experiment_iterations.md
+│   ├── sft_strict_v2_training.md
+│   ├── strict_sft_v2_vs_strict_grpo_v2_holdout.md
 │   ├── report_grpo_v2_analysis.md
 │   ├── uncertainty_honesty_plan.md
 │   ├── architecture.md
