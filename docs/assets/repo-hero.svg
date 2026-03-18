@@ -9,30 +9,34 @@
   <path d="M198 238C221 237 240 235 260 228C282 220 302 207 322 188" stroke="#FFD39F" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
   <path d="M187 279C214 291 243 293 274 289C302 286 327 276 349 258" stroke="#FFD39F" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
   <path d="M194 322C223 334 256 336 290 331" stroke="#FFD39F" stroke-width="6" stroke-linecap="round" opacity="0.65"/>
-  <text x="370" y="176" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="68" font-weight="700">
-    Qwen3-VL Palmistry LoRA
+  <text x="370" y="176" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="64" font-weight="700">
+    Qwen3-VL-8B Palmistry
   </text>
-  <text x="370" y="233" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="28">
-    Hand-image understanding, LoRA fine-tuning, and Chinese palmistry report generation
+  <text x="370" y="233" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="26">
+    qwen3.5-plus teacher distillation, strict SFT/GRPO, and gated Chinese palmistry reports
   </text>
-  <rect x="371" y="277" width="182" height="46" rx="23" fill="#F97316"/>
-  <text x="403" y="307" fill="#FFF7ED" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
-    GPT-5 Teacher Data
+  <rect x="371" y="277" width="208" height="46" rx="23" fill="#F97316"/>
+  <text x="400" y="307" fill="#FFF7ED" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+    qwen3.5-plus Teacher
   </text>
-  <rect x="569" y="277" width="139" height="46" rx="23" fill="#0F766E"/>
-  <text x="605" y="307" fill="#ECFDF5" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
-    LoRA SFT
+  <rect x="595" y="277" width="170" height="46" rx="23" fill="#0F766E"/>
+  <text x="626" y="307" fill="#ECFDF5" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+    Judge + Filter
   </text>
-  <rect x="724" y="277" width="148" height="46" rx="23" fill="#2563EB"/>
-  <text x="759" y="307" fill="#EFF6FF" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
-    Qwen3-VL
+  <rect x="781" y="277" width="135" height="46" rx="23" fill="#2563EB"/>
+  <text x="816" y="307" fill="#EFF6FF" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+    Strict SFT
   </text>
-  <rect x="888" y="277" width="243" height="46" rx="23" fill="#7C3AED"/>
-  <text x="921" y="307" fill="#F5F3FF" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
-    Chinese Palmistry Reports
+  <rect x="932" y="277" width="140" height="46" rx="23" fill="#7C3AED"/>
+  <text x="971" y="307" fill="#F5F3FF" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+    GRPO v2
+  </text>
+  <rect x="1088" y="277" width="194" height="46" rx="23" fill="#A16207"/>
+  <text x="1120" y="307" fill="#FFFBEB" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+    Gate Classifier
   </text>
   <text x="372" y="366" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="24">
-    Public repo, private data excluded, training core preserved from upstream.
+    Default stack: strict GRPO v2 report branch + standalone three-class gate policy.
   </text>
   <defs>
     <linearGradient id="bg" x1="1600" y1="0" x2="0" y2="520" gradientUnits="userSpaceOnUse">
