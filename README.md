@@ -18,23 +18,31 @@
 
 ## 中文简介
 
-这是一个基于 `Qwen3-VL` 的手相图像 LoRA 微调项目。其训练流程包括：
+这是一个基于 `Qwen3-VL-8B-Instruct` 的手相图像 LoRA 微调项目。当前主线流程包括：
 
-- 用 GPT-5 生成手相结构化标注作为 teacher 数据
-- 用 `Qwen3-VL` 作为 student 模型
-- 用 LoRA SFT 学习“读取手部图片并输出掌纹分析”
-- 在推理阶段再通过 prompt，把结构化理解展开成自然中文手相报告
+- 使用 `qwen3.5-plus` 通过 OpenAI-compatible API 生成手相结构化 teacher 数据
+- 在 teacher 生成后增加 `judge -> filter` 质检链，过滤低 grounding 和低一致性样本
+- 以 `Qwen3-VL-8B-Instruct` 作为 student 模型，先做 LoRA SFT 学习“读取手部图片并输出结构化掌纹分析”
+- 再通过 report-style GRPO 和独立三分类 gate classifier，把输出收敛到更稳健的中文手相报告链路
 
 该仓库保留了上游 `Qwen-VL-Series-Finetune` 的通用训练内核，同时将 palmistry 任务相关的数据、训练、推理与展示层整理为独立模块，适合公开发布与持续迭代。
 
-## 当前最佳结果
+## 当前推荐默认版本
 
 - 数据清洗后，从 `19587` 条原始样本中筛出 `3942` 条 `clean` 样本用于 teacher 生成
-- 使用 `qwen3.5-plus` 自动生成 `3899` 条可用结构化 palmistry teacher 数据
-- 按原图簇切分得到 `3509` 条训练样本和 `390` 条验证样本，避免增强图泄漏
-- 基于 `Qwen3-VL-8B-Instruct` 完成 `3 epochs` LoRA SFT，最终 `train_loss = 0.5444`
-- 经分层门控校准后，`val` 集 `structured_available_rate = 0.96`，`full_report_rate = 0.44`
-- `hard_cases` 集 `low_confidence_rate = 0.80`，`full_report_rate = 0.0`，说明困难样本已能以谨慎分析或重拍提示为主
+- 使用 `qwen3.5-plus + judge/filter` 收口得到 `3906` 条 strict `judged_v2` teacher 样本
+- 按严格三阶段切分得到：
+  - `sft_train = 2344`
+  - `grpo_train = 976`
+  - `eval_holdout = 586`
+- strict `SFT v2` 基线：
+  - `gate_match_rate = 0.7235`
+  - `structured_available_rate = 0.8959`
+  - `report uncertainty_honesty = 0.7390`
+- 当前默认上线分支是 strict `GRPO v2 + standalone gate classifier`
+  - `report uncertainty_honesty = 0.7710`
+  - `report reference_alignment = 0.4111`
+  - `report safety_language = 1.0000`
 
 ## Strict V2 Snapshot
 
@@ -56,10 +64,11 @@ This repository adapts the upstream `Qwen-VL-Series-Finetune` framework into a p
 
 The current pipeline is:
 
-- GPT-5 generated palmistry annotations as teacher data
-- `Qwen3-VL` as the student model
+- `qwen3.5-plus` generated palmistry annotations as teacher data
+- a `teacher -> judge -> filter` stage to remove weakly grounded samples
+- `Qwen3-VL-8B-Instruct` as the student model
 - LoRA SFT for image-conditioned palm-line understanding
-- Prompt-based report generation for final natural Chinese responses
+- report-style GRPO plus a standalone three-class gate classifier for the final Chinese report pipeline
 
 ## Why This Repo
 
@@ -82,15 +91,17 @@ The current pipeline is:
 ## Project Snapshot
 
 ```text
-GPT-5 palmistry labels
+qwen3.5-plus teacher generation
+        ↓
+teacher -> judge -> filter
         ↓
 LLaVA-style hand-image dataset
         ↓
-src/train/train_sft.py
+Qwen3-VL-8B-Instruct + LoRA SFT
         ↓
-Qwen3-VL + LoRA adapters
+report-style GRPO
         ↓
-Palmistry inference pipeline
+standalone gate classifier + palmistry inference pipeline
         ↓
 CLI / Gradio Chinese report generation
 ```
@@ -179,9 +190,9 @@ The training backbone remains the upstream multimodal SFT stack. The palmistry l
 
 One important project-specific detail:
 
-- the current `data/palmistry_llava.json` labels are mainly GPT-5 generated structured JSON strings
+- the current strict data line is mainly `qwen3.5-plus` generated structured JSON with an extra `judge -> filter` stage
 - so the LoRA is learning visual palm-line interpretation and structured analysis first
-- the final long-form natural Chinese report style can then be improved further with the report-oriented GRPO stage
+- the final long-form natural Chinese report style is then improved further with report-oriented GRPO
 
 That means this repo is best understood as:
 
@@ -359,7 +370,7 @@ Tracked example:
 Data notes:
 
 - Real hand images are not included in this public repo
-- Full GPT-5 annotation files are not included either
+- Full private teacher annotation files are not included either
 - Local testing symlinks, checkpoints, and private assets are ignored by git
 
 ## Public Repository Safety
