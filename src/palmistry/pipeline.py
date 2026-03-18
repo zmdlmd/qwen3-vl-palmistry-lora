@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import random
 from typing import Any
 
 import torch
@@ -48,6 +49,21 @@ _UNCERTAINTY_MARKERS = (
     "较低",
     "不足",
     "缺失",
+)
+
+_CAUTION_MESSAGE_TEMPLATES = (
+    "以下线条可见信息有限：{line_text}。报告已按保守方式处理，不确定处不会强行展开。",
+    "目前 {line_text} 的可见度偏弱，后续解读会尽量保持克制，只依据已经看清的部分展开。",
+    "从这张照片里，{line_text} 的纹路信息还不够稳定，因此报告会采用更保守的表达方式。",
+    "{line_text} 这部分掌纹目前只看到有限信息，下面的分析会优先保留确定内容，不额外延伸猜测。",
+    "由于 {line_text} 的可见细节不足，这次报告会把相关判断控制在保守范围内，不做过度解读。",
+)
+
+_GATE_CAUTION_MESSAGE_TEMPLATES = (
+    "当前照片已进入“谨慎分析”路径：可以做保守掌纹观察，但不适合输出强结论的完整手相报告。可见信息有限的线条包括：{line_text}。如需更稳定结果，建议在自然光下重拍更清晰的掌心照片。手相仅供参考，请以生活实际为准。",
+    "这张照片目前更适合走“谨慎分析”模式：可以继续做保守观察，但不建议直接下强判断。当前可见信息偏弱的线条有：{line_text}。如果想要更完整的报告，建议重新拍摄一张更清晰的掌心照片。手相仅供参考，请以生活实际为准。",
+    "系统已切换到“谨慎分析”路径：这意味着可以继续生成偏保守的观察结果，但不会输出过满的结论。当前信息有限的线条包括：{line_text}。若希望结果更稳定，建议在自然光下重拍。手相仅供参考，请以生活实际为准。",
+    "当前图像质量允许继续做有限度的掌纹观察，因此已进入“谨慎分析”模式。可辨信息不足的线条主要是：{line_text}。后续内容会尽量克制；如果你想看更完整的判断，建议补拍更清晰的掌心照片。手相仅供参考，请以生活实际为准。",
 )
 
 
@@ -200,7 +216,8 @@ class PalmistryPipeline:
         if not uncertain_lines:
             return ""
         line_text = "、".join(uncertain_lines)
-        return f"以下线条可见信息有限：{line_text}。报告已按保守方式处理，不确定处不会强行展开。"
+        template = random.choice(_CAUTION_MESSAGE_TEMPLATES)
+        return template.format(line_text=line_text)
 
     @staticmethod
     def _normalize_image(image: str | Path | Any) -> str | Any:
@@ -376,12 +393,8 @@ class PalmistryPipeline:
     @staticmethod
     def _build_gate_caution_message(uncertain_lines: list[str]) -> str:
         if uncertain_lines:
-            return (
-                "当前照片已进入“谨慎分析”路径：可以做保守掌纹观察，但不适合输出强结论的完整手相报告。"
-                f" 可见信息有限的线条包括：{'、'.join(uncertain_lines)}。"
-                "如需更稳定结果，建议在自然光下重拍更清晰的掌心照片。"
-                " 手相仅供参考，请以生活实际为准。"
-            )
+            template = random.choice(_GATE_CAUTION_MESSAGE_TEMPLATES)
+            return template.format(line_text="、".join(uncertain_lines))
         return (
             "当前照片已进入“谨慎分析”路径：可以做保守掌纹观察，但不适合输出强结论的完整手相报告。"
             " 如需更稳定结果，建议在自然光下重拍更清晰的掌心照片。"
@@ -615,6 +628,47 @@ class PalmistryPipeline:
             top_p=top_p,
         )
         return result.report
+
+    def generate_report_from_structured(
+        self,
+        structured_json: str,
+        *,
+        style: str = "balanced",
+        caution_hint: str | None = None,
+        max_new_tokens: int = 900,
+        temperature: float = 0.4,
+        top_p: float = 0.9,
+    ) -> str:
+        structured_payload = load_palmistry_payload(structured_json)
+        sanitized_payload, _ = sanitize_palmistry_payload(structured_payload)
+        errors = validate_palmistry_payload(sanitized_payload)
+        if errors:
+            raise ValueError("; ".join(errors[:5]))
+
+        canonical_json = canonicalize_palmistry_json(sanitized_payload)
+        report_caution = caution_hint or (
+            "这是一次用户主动触发的谨慎模式报告。"
+            "请基于已有结构化信息做保守解读，不要补充结构化 JSON 中没有明确出现的细节。"
+        )
+        prompt = build_structured_report_prompt(
+            canonical_json,
+            style=style,
+            caution_hint=report_caution,
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+        return self._generate(
+            messages,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+        )
 
     def answer_followup(
         self,

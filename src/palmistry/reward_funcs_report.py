@@ -238,6 +238,12 @@ def _required_line_mention_score(text: str) -> float:
     return hits / len(REQUIRED_LINE_NAMES)
 
 
+def _line_section_presence_score(text: str) -> float:
+    sections = _extract_line_sections(text)
+    hits = sum(1 for line_name in REQUIRED_LINE_NAMES if sections.get(line_name))
+    return hits / len(REQUIRED_LINE_NAMES)
+
+
 def _reference_uncertainty_score(payload: dict[str, Any]) -> float:
     reference_text = _reference_text(payload)
     if not reference_text:
@@ -278,6 +284,28 @@ def _line_uncertainty_honesty_score(section_text: str, reference_text: str) -> f
     return 0.9
 
 
+def _line_grounding_score(section_text: str, reference_text: str) -> float:
+    if not section_text or not reference_text:
+        return 0.0
+
+    if _contains_any(reference_text, UNCERTAINTY_TERMS):
+        base = 1.0 if _contains_any(section_text, CAUTIOUS_TERMS) else 0.0
+        base -= min(0.6, _unsupported_detail_count(section_text, reference_text) * 0.2)
+        base -= min(0.6, _assertive_signal_count(section_text) * 0.2)
+        return max(0.0, min(1.0, base))
+
+    pred_ngrams = _char_ngram_set(section_text)
+    ref_ngrams = _char_ngram_set(reference_text)
+    if not pred_ngrams or not ref_ngrams:
+        return 0.0
+
+    overlap = len(pred_ngrams & ref_ngrams) / len(pred_ngrams | ref_ngrams)
+    unsupported_details = _unsupported_detail_count(section_text, reference_text)
+    assertive_signals = _assertive_signal_count(section_text)
+    penalty = min(0.35, unsupported_details * 0.08 + max(0, assertive_signals - 1) * 0.04)
+    return max(0.0, min(1.0, overlap - penalty))
+
+
 def report_format_reward(completions, **kwargs):
     rewards = []
     for completion in completions:
@@ -299,7 +327,11 @@ def section_structure_reward(completions, **kwargs):
     rewards = []
     for completion in completions:
         completion = _as_text(completion)
-        rewards.append(0.6 * _ordered_section_score(completion) + 0.4 * _required_line_mention_score(completion))
+        rewards.append(
+            0.45 * _ordered_section_score(completion)
+            + 0.25 * _required_line_mention_score(completion)
+            + 0.30 * _line_section_presence_score(completion)
+        )
     return rewards
 
 
@@ -319,8 +351,23 @@ def reference_alignment_reward(completions, assistant, **kwargs):
             continue
 
         overlap = len(pred_ngrams & ref_ngrams) / len(pred_ngrams | ref_ngrams)
-        structure = 0.5 * _ordered_section_score(completion) + 0.5 * _required_line_mention_score(completion)
-        rewards.append(0.7 * overlap + 0.3 * structure)
+        line_sections = _extract_line_sections(completion)
+        line_scores = []
+        for line_name in REQUIRED_LINE_NAMES:
+            line_scores.append(
+                _line_grounding_score(
+                    line_sections.get(line_name, ""),
+                    _line_reference_text(ref_payload, line_name),
+                )
+            )
+
+        line_alignment = sum(line_scores) / len(line_scores) if line_scores else 0.0
+        structure = (
+            0.4 * _ordered_section_score(completion)
+            + 0.3 * _required_line_mention_score(completion)
+            + 0.3 * _line_section_presence_score(completion)
+        )
+        rewards.append(0.45 * overlap + 0.35 * line_alignment + 0.20 * structure)
     return rewards
 
 
@@ -382,10 +429,14 @@ def hallucination_penalty_reward(completions, assistant, **kwargs):
             if _contains_any(reference_text, UNCERTAINTY_TERMS) and not _contains_any(section_text, CAUTIOUS_TERMS):
                 penalties += 1.0
 
-            unsupported_details = sum(
-                1 for term in DETAIL_TERMS if term in section_text and term not in reference_text
-            )
-            penalties += min(1.0, unsupported_details * 0.25)
+            unsupported_details = _unsupported_detail_count(section_text, reference_text)
+            assertive_signals = _assertive_signal_count(section_text)
+
+            penalties += min(1.0, unsupported_details * 0.35)
+            if unsupported_details and assertive_signals:
+                penalties += min(0.6, assertive_signals * 0.2)
+            elif _contains_any(reference_text, UNCERTAINTY_TERMS):
+                penalties += min(0.5, assertive_signals * 0.15)
 
         if checks == 0:
             rewards.append(0.0)

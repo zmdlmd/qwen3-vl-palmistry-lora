@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 
 import gradio as gr
 
@@ -59,7 +60,9 @@ button.primary {
   box-shadow: 0 10px 24px rgba(249, 115, 22, 0.35);
 }
 
-#report-card {
+#report-card,
+#diagnostics-card,
+#followup-card {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 18px;
@@ -76,6 +79,11 @@ button.primary {
 .status-ready {
   background: linear-gradient(135deg, #ecfccb, #f0fdf4);
   border-color: #84cc16 !important;
+}
+
+.status-cautious {
+  background: linear-gradient(135deg, #fffbeb, #fef3c7);
+  border-color: #f59e0b !important;
 }
 
 .status-retake {
@@ -100,6 +108,11 @@ button.primary {
 
 .badge-ready {
   background: #65a30d;
+  color: #ffffff;
+}
+
+.badge-cautious {
+  background: #d97706;
   color: #ffffff;
 }
 
@@ -155,6 +168,119 @@ button.primary {
   color: #0f172a;
   word-break: break-word;
 }
+
+.report-shell {
+  background:
+    radial-gradient(circle at top right, rgba(251, 191, 36, 0.12), transparent 38%),
+    linear-gradient(180deg, #fffdf8 0%, #fffaf0 100%);
+  border: 1px solid #f1e0b6;
+  border-radius: 22px;
+  padding: 22px 24px;
+}
+
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(217, 119, 6, 0.16);
+}
+
+.report-kicker {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #b45309;
+}
+
+.report-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: #1f2937;
+  margin-top: 4px;
+}
+
+.report-badge {
+  border-radius: 999px;
+  background: rgba(217, 119, 6, 0.1);
+  color: #b45309;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.report-body {
+  display: grid;
+  gap: 14px;
+}
+
+.report-module {
+  border-radius: 18px;
+  padding: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.85);
+}
+
+.module-core {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 247, 237, 0.88));
+  border-color: rgba(251, 146, 60, 0.28);
+}
+
+.module-energy {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(254, 249, 195, 0.88));
+  border-color: rgba(234, 179, 8, 0.26);
+}
+
+.module-guidance {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(239, 246, 255, 0.92));
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+.report-module-title {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.module-core .report-module-title {
+  color: #c2410c;
+}
+
+.module-energy .report-module-title {
+  color: #a16207;
+}
+
+.module-guidance .report-module-title {
+  color: #1d4ed8;
+}
+
+.report-section {
+  padding: 8px 0;
+}
+
+.report-section + .report-section {
+  border-top: 1px dashed rgba(148, 163, 184, 0.28);
+}
+
+.report-section-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #6b7280;
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+}
+
+.report-paragraph {
+  color: #334155;
+  line-height: 1.8;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
 """
 
 
@@ -177,6 +303,26 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
+    report_headings = (
+        "整体印象",
+        "生命线",
+        "智慧线",
+        "感情线",
+        "事业线与发展节奏",
+        "事业线",
+        "整体能量与近期运势",
+        "现实建议与温和提醒",
+        "总结祝福",
+    )
+
+    def cautious_button_update(gate_decision, structured_json):
+        visible = gate_decision == "cautious" and bool(structured_json and str(structured_json).strip())
+        return gr.update(visible=visible)
+
+    def section_update(content):
+        visible = bool(content and str(content).strip())
+        return gr.update(visible=visible)
+
     def format_probability(value):
         if value is None:
             return "N/A"
@@ -254,8 +400,8 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
             title = "当前照片不适合继续做完整手相解读"
         elif gate_decision == "cautious":
             badge = "谨慎分析"
-            status_class = "status-ready"
-            badge_class = "badge-wait"
+            status_class = "status-cautious"
+            badge_class = "badge-cautious"
             title = "当前照片只适合保守掌纹观察"
         else:
             badge = "可继续分析"
@@ -279,16 +425,99 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
             return ""
         return json.dumps({"visibility_assessment": visibility_assessment}, ensure_ascii=False, indent=2)
 
+    def format_report_html(report_text):
+        text = str(report_text or "").strip()
+        if not text:
+            return ""
+
+        parts = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+        if not parts:
+            parts = [text]
+
+        grouped_sections = {
+            "core": [],
+            "energy": [],
+            "guidance": [],
+        }
+        for part in parts:
+            normalized_part = re.sub(r"^\s*(?:[一二三四五六七八九十]+、|\d+[.、])\s*", "", part)
+            title = ""
+            body = normalized_part
+            for heading in report_headings:
+                for prefix in (f"{heading}：", f"{heading}:"):
+                    if normalized_part.startswith(prefix):
+                        title = heading
+                        body = normalized_part[len(prefix) :].strip()
+                        break
+                if title:
+                    break
+                if normalized_part == heading:
+                    title = heading
+                    body = ""
+                    break
+
+            section_html = ""
+            if title:
+                section_html += f'<div class="report-section-title">{html.escape(title)}</div>'
+            if body:
+                section_html += f'<div class="report-paragraph">{html.escape(body)}</div>'
+            if not section_html:
+                section_html = f'<div class="report-paragraph">{html.escape(normalized_part)}</div>'
+
+            if title in {"整体印象", "生命线", "智慧线", "感情线", "事业线", "事业线与发展节奏"}:
+                bucket = "core"
+            elif title == "整体能量与近期运势":
+                bucket = "energy"
+            else:
+                bucket = "guidance"
+            grouped_sections[bucket].append(f'<div class="report-section">{section_html}</div>')
+
+        modules = []
+        module_specs = (
+            ("core", "手相分析", "module-core"),
+            ("energy", "能量与运势", "module-energy"),
+            ("guidance", "建议与祝福", "module-guidance"),
+        )
+        for key, title, css_class in module_specs:
+            if not grouped_sections[key]:
+                continue
+            modules.append(
+                f"""
+                <div class="report-module {css_class}">
+                  <div class="report-module-title">{html.escape(title)}</div>
+                  {''.join(grouped_sections[key])}
+                </div>
+                """.strip()
+            )
+
+        return f"""
+        <div class="report-shell">
+          <div class="report-header">
+            <div>
+              <div class="report-kicker">Palmistry Report</div>
+              <div class="report-title">手相分析报告</div>
+            </div>
+            <div class="report-badge">结构化结果展开</div>
+          </div>
+          <div class="report-body">
+            {''.join(modules)}
+          </div>
+        </div>
+        """.strip()
+
     def generate_report(image, style):
         if image is None:
             message = "请先上传清晰的手掌照片。"
             return (
                 format_status_html("continue", "", None),
-                message,
+                cautious_button_update("continue", ""),
+                section_update(message),
+                format_report_html(message),
                 "",
                 "",
                 "",
                 "",
+                section_update(""),
                 [],
                 [],
             )
@@ -297,14 +526,34 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         report_state = "" if result.gate_decision != "continue" else result.report
         return (
             format_status_html(result.gate_decision, result.caution_message, result.visibility_assessment),
-            result.report,
-            result.caution_message,
+            cautious_button_update(result.gate_decision, result.structured_json),
+            section_update(result.report),
+            format_report_html(result.report),
             result.structured_json,
             format_visibility_json(result.visibility_assessment),
+            result.caution_message,
             report_state,
+            section_update(report_state),
             [],
             [],
         )
+
+    def continue_cautious_report(structured_json, caution_message, style):
+        if not structured_json or not str(structured_json).strip():
+            message = "当前没有可用的结构化结果，无法基于现有结构继续生成报告。请先上传图片并完成一次分析。"
+            return section_update(message), format_report_html(message), "", section_update(""), [], []
+
+        try:
+            report = pipeline.generate_report_from_structured(
+                str(structured_json),
+                style=style,
+                caution_hint=str(caution_message).strip() or None,
+            )
+        except Exception as exc:
+            message = f"基于现有结构生成报告失败：{exc}"
+            return section_update(message), format_report_html(message), "", section_update(""), [], []
+
+        return section_update(report), format_report_html(report), report, section_update(report), [], []
 
     def ask_followup(user_question, history, report):
         history = history or []
@@ -320,9 +569,25 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         return updated_history, updated_history, ""
 
     def clear_all():
-        return None, "balanced", format_status_html("continue", "", None), "", "", "", "", "", [], [], ""
+        return (
+            None,
+            "balanced",
+            format_status_html("continue", "", None),
+            cautious_button_update("continue", ""),
+            section_update(""),
+            "",
+            "",
+            "",
+            "",
+            "",
+            section_update(""),
+            [],
+            [],
+            "",
+        )
 
     with gr.Blocks(css=CSS, title="Palmistry LoRA Demo") as demo:
+        caution_state = gr.State("")
         report_state = gr.State("")
         history_state = gr.State([])
 
@@ -367,46 +632,51 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
 
                 with gr.Column(scale=1, min_width=360):
                     status_box = gr.HTML(value=format_status_html(False, "", None))
-                    with gr.Column(elem_id="report-card"):
+                    cautious_report_btn = gr.Button(
+                        "基于现有结构继续生成报告",
+                        visible=False,
+                        elem_classes="primary",
+                    )
+                    with gr.Column(elem_id="diagnostics-card"):
                         with gr.Tabs():
-                            with gr.Tab("分析报告"):
-                                report_box = gr.Textbox(
-                                    label="手相分析报告",
-                                    lines=18,
-                                    show_copy_button=True,
-                                )
-                                caution_box = gr.Textbox(
-                                    label="保守模式提示",
-                                    lines=4,
-                                    show_copy_button=True,
-                                )
                             with gr.Tab("结构化 JSON"):
-                                structured_box = gr.Textbox(
+                                structured_box = gr.Code(
                                     label="结构化掌纹分析 JSON",
-                                    lines=18,
-                                    show_copy_button=True,
+                                    language="json",
+                                    lines=20,
+                                    interactive=False,
                                 )
                             with gr.Tab("图像质检"):
-                                visibility_box = gr.Textbox(
+                                visibility_box = gr.Code(
                                     label="可见性质检 JSON",
-                                    lines=12,
-                                    show_copy_button=True,
+                                    language="json",
+                                    lines=16,
+                                    interactive=False,
                                 )
 
-            gr.Markdown("### 报告追问")
-            chatbot = gr.Chatbot(label="继续追问", height=320)
-            with gr.Row():
-                question_box = gr.Textbox(
-                    label="继续提问",
-                    placeholder="例如：感情线部分能不能再展开一点？",
-                    scale=5,
-                )
-                send_btn = gr.Button("发送", elem_classes="primary", scale=1)
+            with gr.Column(elem_id="report-card", visible=False) as report_section:
+                report_box = gr.HTML()
+
+            with gr.Column(elem_id="followup-card", visible=False) as followup_section:
+                gr.Markdown("### 报告追问")
+                chatbot = gr.Chatbot(label="继续追问", height=320)
+                with gr.Row():
+                    question_box = gr.Textbox(
+                        label="继续提问",
+                        placeholder="例如：感情线部分能不能再展开一点？",
+                        scale=5,
+                    )
+                    send_btn = gr.Button("发送", elem_classes="primary", scale=1)
 
         generate_btn.click(
             generate_report,
             inputs=[image_input, style_input],
-            outputs=[status_box, report_box, caution_box, structured_box, visibility_box, report_state, chatbot, history_state],
+            outputs=[status_box, cautious_report_btn, report_section, report_box, structured_box, visibility_box, caution_state, report_state, followup_section, chatbot, history_state],
+        )
+        cautious_report_btn.click(
+            continue_cautious_report,
+            inputs=[structured_box, caution_state, style_input],
+            outputs=[report_section, report_box, report_state, followup_section, chatbot, history_state],
         )
         send_btn.click(
             ask_followup,
@@ -420,7 +690,7 @@ def build_app(pipeline: PalmistryPipeline) -> gr.Blocks:
         )
         clear_btn.click(
             clear_all,
-            outputs=[image_input, style_input, status_box, report_box, caution_box, structured_box, visibility_box, report_state, chatbot, history_state, question_box],
+            outputs=[image_input, style_input, status_box, cautious_report_btn, report_section, report_box, structured_box, visibility_box, caution_state, report_state, followup_section, chatbot, history_state, question_box],
         )
 
     return demo
