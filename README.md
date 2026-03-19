@@ -44,6 +44,16 @@
   - `report reference_alignment = 0.4111`
   - `report safety_language = 1.0000`
 
+当前默认部署配置已经冻结为：
+
+- base model: `Qwen3-VL-8B-Instruct`
+- report adapter: `output/palmistry_grpo_report_qwen3_vl_8b_strict_v2/checkpoint-200-clean-adapter`
+- gate checkpoint: `output/palmistry_gate_classifier_efficientnet_b0_v1/best.pt`
+- inference profile: `configs/palmistry/inference.strict_grpo_v2.env.example`
+- launcher scripts:
+  - `scripts/palmistry/run_gradio.sh`
+  - `scripts/palmistry/run_infer.sh`
+
 ## Strict V2 Snapshot
 
 - 基于 `teacher -> judge -> filter` 重新收口得到 `3906` 条 strict `judged_v2` 样本
@@ -81,6 +91,7 @@ The current pipeline is:
 ## Experiment Notes
 
 - Iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
+- Deployment guide: [docs/deployment.md](docs/deployment.md)
 - Strict SFT v2 training: [docs/sft_strict_v2_training.md](docs/sft_strict_v2_training.md)
 - Strict SFT v2 vs strict GRPO v2 holdout: [docs/strict_sft_v2_vs_strict_grpo_v2_holdout.md](docs/strict_sft_v2_vs_strict_grpo_v2_holdout.md)
 - Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
@@ -132,6 +143,7 @@ This repository now supports two complementary stages beyond basic SFT:
 - Gradio demo: [apps/gradio_palmistry.py](apps/gradio_palmistry.py)
 - Adapter export tool: [tools/export_peft_adapter.py](tools/export_peft_adapter.py)
 - Experiment iteration summary: [docs/experiment_iterations.md](docs/experiment_iterations.md)
+- Deployment guide: [docs/deployment.md](docs/deployment.md)
 - Report GRPO v2 analysis: [docs/report_grpo_v2_analysis.md](docs/report_grpo_v2_analysis.md)
 - Strict SFT v2 training: [docs/sft_strict_v2_training.md](docs/sft_strict_v2_training.md)
 - Strict SFT v2 vs strict GRPO v2 holdout: [docs/strict_sft_v2_vs_strict_grpo_v2_holdout.md](docs/strict_sft_v2_vs_strict_grpo_v2_holdout.md)
@@ -307,12 +319,8 @@ The current inference stack now uses an independent three-class gate policy:
 ### 4. Run CLI Inference
 
 ```bash
-python -m tools.infer_palmistry \
-  --base-model /path/to/Qwen3-VL-8B-Instruct \
-  --lora-path ./output/palmistry_lora_qwen3_vl_8b \
-  --gate-classifier-path ./output/palmistry_gate_classifier_efficientnet_b0_v1/best.pt \
-  --image /path/to/hand.png \
-  --style balanced
+cp configs/palmistry/inference.strict_grpo_v2.env.example configs/palmistry/inference.strict_grpo_v2.env
+bash scripts/palmistry/run_infer.sh /path/to/hand.png configs/palmistry/inference.strict_grpo_v2.env
 ```
 
 If `--gate-classifier-path` is set, the runtime uses the standalone three-class gate classifier first and only falls back to the old generative gate if the classifier path is missing or inference fails.
@@ -321,10 +329,8 @@ The standalone classifier also applies conservative confidence thresholds by def
 ### 5. Run Gradio Demo
 
 ```bash
-python -m apps.gradio_palmistry \
-  --base-model /path/to/Qwen3-VL-8B-Instruct \
-  --lora-path ./output/palmistry_lora_qwen3_vl_8b \
-  --gate-classifier-path ./output/palmistry_gate_classifier_efficientnet_b0_v1/best.pt
+cp configs/palmistry/inference.strict_grpo_v2.env.example configs/palmistry/inference.strict_grpo_v2.env
+bash scripts/palmistry/run_gradio.sh configs/palmistry/inference.strict_grpo_v2.env
 ```
 
 ## GRPO Reinforcement Learning
