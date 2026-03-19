@@ -15,24 +15,24 @@
   <text x="370" y="233" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="26">
     qwen3.5-plus teacher distillation, strict SFT/GRPO, and gated Chinese palmistry reports
   </text>
-  <rect x="371" y="277" width="208" height="46" rx="23" fill="#F97316"/>
-  <text x="400" y="307" fill="#FFF7ED" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+  <rect x="371" y="277" width="286" height="46" rx="23" fill="#F97316"/>
+  <text x="514" y="307" text-anchor="middle" fill="#FFF7ED" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">
     qwen3.5-plus Teacher
   </text>
-  <rect x="595" y="277" width="170" height="46" rx="23" fill="#0F766E"/>
-  <text x="626" y="307" fill="#ECFDF5" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+  <rect x="673" y="277" width="170" height="46" rx="23" fill="#0F766E"/>
+  <text x="758" y="307" text-anchor="middle" fill="#ECFDF5" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">
     Judge + Filter
   </text>
-  <rect x="781" y="277" width="135" height="46" rx="23" fill="#2563EB"/>
-  <text x="816" y="307" fill="#EFF6FF" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+  <rect x="859" y="277" width="135" height="46" rx="23" fill="#2563EB"/>
+  <text x="926.5" y="307" text-anchor="middle" fill="#EFF6FF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">
     Strict SFT
   </text>
-  <rect x="932" y="277" width="140" height="46" rx="23" fill="#7C3AED"/>
-  <text x="971" y="307" fill="#F5F3FF" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+  <rect x="1010" y="277" width="140" height="46" rx="23" fill="#7C3AED"/>
+  <text x="1080" y="307" text-anchor="middle" fill="#F5F3FF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">
     GRPO v2
   </text>
-  <rect x="1088" y="277" width="194" height="46" rx="23" fill="#A16207"/>
-  <text x="1120" y="307" fill="#FFFBEB" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">
+  <rect x="1166" y="277" width="194" height="46" rx="23" fill="#A16207"/>
+  <text x="1263" y="307" text-anchor="middle" fill="#FFFBEB" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">
     Gate Classifier
   </text>
   <text x="372" y="366" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="24">
