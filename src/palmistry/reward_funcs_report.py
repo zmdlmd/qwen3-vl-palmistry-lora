@@ -60,6 +60,42 @@ DETAIL_TERMS = (
     "神秘十字",
     "三奇纹",
 )
+EVIDENCE_TERMS = (
+    "清晰",
+    "模糊",
+    "较长",
+    "长",
+    "较短",
+    "短",
+    "较深",
+    "深",
+    "较浅",
+    "浅",
+    "分叉",
+    "断裂",
+    "岛纹",
+    "双重",
+    "二股",
+    "三股",
+    "链状",
+    "羽毛状",
+    "上扬",
+    "下垂",
+    "平直",
+    "弧形",
+    "重合",
+    "同源",
+    "断续",
+    "现实型",
+    "感性型",
+    "直觉型",
+    "标准型",
+    "木星丘",
+    "月丘",
+    "金星丘",
+    "水星丘",
+    "太阳丘",
+)
 ASSERTIVE_PATTERNS = (
     re.compile(r"(明显|清晰|分明).{0,4}(断裂|分叉|岛纹|双重|二股|三股|十字|贯穿)"),
     re.compile(r"(深|较深|很深).{0,2}(长|较长|很长)"),
@@ -261,6 +297,10 @@ def _assertive_signal_count(section_text: str) -> int:
     return sum(len(pattern.findall(section_text)) for pattern in ASSERTIVE_PATTERNS)
 
 
+def _reference_evidence_terms(reference_text: str) -> tuple[str, ...]:
+    return tuple(term for term in EVIDENCE_TERMS if term in reference_text)
+
+
 def _line_uncertainty_honesty_score(section_text: str, reference_text: str) -> float:
     reference_uncertain = _contains_any(reference_text, UNCERTAINTY_TERMS)
     cautious = _contains_any(section_text, CAUTIOUS_TERMS)
@@ -304,6 +344,38 @@ def _line_grounding_score(section_text: str, reference_text: str) -> float:
     assertive_signals = _assertive_signal_count(section_text)
     penalty = min(0.35, unsupported_details * 0.08 + max(0, assertive_signals - 1) * 0.04)
     return max(0.0, min(1.0, overlap - penalty))
+
+
+def _line_evidence_coverage_score(section_text: str, reference_text: str) -> float:
+    if not section_text or not reference_text:
+        return 0.0
+
+    if _contains_any(reference_text, UNCERTAINTY_TERMS):
+        base = 1.0 if _contains_any(section_text, CAUTIOUS_TERMS) else 0.0
+        base -= min(0.6, _unsupported_detail_count(section_text, reference_text) * 0.2)
+        base -= min(0.6, _assertive_signal_count(section_text) * 0.2)
+        return max(0.0, min(1.0, base))
+
+    evidence_terms = _reference_evidence_terms(reference_text)
+    grounding = _line_grounding_score(section_text, reference_text)
+    if not evidence_terms:
+        return grounding
+
+    matched = sum(1 for term in evidence_terms if term in section_text)
+    coverage = matched / len(evidence_terms)
+    if _contains_any(section_text, CAUTIOUS_TERMS):
+        coverage = max(0.0, coverage - 0.12)
+
+    unsupported_details = _unsupported_detail_count(section_text, reference_text)
+    assertive_signals = _assertive_signal_count(section_text)
+    penalty = min(0.25, unsupported_details * 0.06 + max(0, assertive_signals - 1) * 0.03)
+
+    score = 0.65 * coverage + 0.35 * grounding - penalty
+    return max(0.0, min(1.0, score))
+
+
+def _caution_term_count(text: str) -> int:
+    return sum(_as_text(text).count(term) for term in CAUTIOUS_TERMS)
 
 
 def report_format_reward(completions, **kwargs):
@@ -355,7 +427,7 @@ def reference_alignment_reward(completions, assistant, **kwargs):
         line_scores = []
         for line_name in REQUIRED_LINE_NAMES:
             line_scores.append(
-                _line_grounding_score(
+                _line_evidence_coverage_score(
                     line_sections.get(line_name, ""),
                     _line_reference_text(ref_payload, line_name),
                 )
@@ -368,6 +440,28 @@ def reference_alignment_reward(completions, assistant, **kwargs):
             + 0.3 * _line_section_presence_score(completion)
         )
         rewards.append(0.45 * overlap + 0.35 * line_alignment + 0.20 * structure)
+    return rewards
+
+
+def evidence_coverage_reward(completions, assistant, **kwargs):
+    rewards = []
+    for completion, reference in zip(completions, assistant):
+        completion = _as_text(completion)
+        ref_payload = _safe_parse_payload(reference)
+        if ref_payload is None:
+            rewards.append(0.0)
+            continue
+
+        line_sections = _extract_line_sections(completion)
+        line_scores = []
+        for line_name in REQUIRED_LINE_NAMES:
+            section_text = line_sections.get(line_name, "")
+            reference_text = _line_reference_text(ref_payload, line_name)
+            if not reference_text:
+                continue
+            line_scores.append(_line_evidence_coverage_score(section_text, reference_text))
+
+        rewards.append(sum(line_scores) / len(line_scores) if line_scores else 0.0)
     return rewards
 
 
@@ -443,6 +537,65 @@ def hallucination_penalty_reward(completions, assistant, **kwargs):
             continue
 
         rewards.append(max(0.0, 1.0 - penalties / checks))
+    return rewards
+
+
+def caution_balance_reward(completions, assistant, **kwargs):
+    rewards = []
+    for completion, reference in zip(completions, assistant):
+        completion = _as_text(completion)
+        ref_payload = _safe_parse_payload(reference)
+        if ref_payload is None:
+            rewards.append(0.0)
+            continue
+
+        expected_gate = _estimate_reference_gate(ref_payload)
+        predicted_gate = _estimate_report_gate(completion)
+        caution_mentions = _caution_term_count(completion)
+        line_sections = _extract_line_sections(completion)
+
+        concrete_scores = []
+        uncertain_required = 0
+        for line_name in REQUIRED_LINE_NAMES:
+            reference_text = _line_reference_text(ref_payload, line_name)
+            if not reference_text:
+                continue
+            if _contains_any(reference_text, UNCERTAINTY_TERMS):
+                uncertain_required += 1
+                continue
+            concrete_scores.append(
+                _line_evidence_coverage_score(
+                    line_sections.get(line_name, ""),
+                    reference_text,
+                )
+            )
+
+        concrete_mean = sum(concrete_scores) / len(concrete_scores) if concrete_scores else 0.0
+        penalty = 0.0
+
+        if expected_gate == "continue":
+            if predicted_gate == "cautious":
+                penalty += 0.35
+            elif predicted_gate == "retake":
+                penalty += 0.70
+            penalty += max(0, caution_mentions - 1) * 0.03
+            if concrete_mean < 0.35:
+                penalty += 0.25
+        elif expected_gate == "cautious":
+            if predicted_gate == "continue" and uncertain_required >= 2:
+                penalty += 0.20
+            elif predicted_gate == "retake":
+                penalty += 0.20
+            penalty += max(0, caution_mentions - (uncertain_required + 1)) * 0.02
+            if concrete_mean < 0.25:
+                penalty += 0.15
+        else:
+            if predicted_gate == "continue":
+                penalty += 0.60
+            elif predicted_gate == "cautious":
+                penalty += 0.15
+
+        rewards.append(max(0.0, 1.0 - penalty))
     return rewards
 
 
