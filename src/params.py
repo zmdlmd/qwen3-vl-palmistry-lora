@@ -269,6 +269,18 @@ class GRPOArguments(GRPOConfigTRL):
     max_completion_length: int = 256
     max_prompt_length: int = 512
     use_liger: bool = False
+    sapo_temperature: float = field(
+        default=4.0,
+        metadata={"help": "Soft gate temperature for SAPO loss. Higher values more aggressively downweight off-center ratios."},
+    )
+    sapo_center: float = field(
+        default=1.0,
+        metadata={"help": "Target importance ratio center for SAPO soft gating."},
+    )
+    sapo_min_weight: float = field(
+        default=0.2,
+        metadata={"help": "Minimum interpolation weight assigned to the raw importance ratio in SAPO."},
+    )
 
 
 @dataclass
